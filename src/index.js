@@ -1018,10 +1018,39 @@ function drawHourlyTrend() {
 
 // ===== 工具函数 =====
 function showTooltip(event, html) {
-    tooltip.style("opacity", 1)
-        .html(html)
-        .style("left", (event.pageX + 15) + "px")
-        .style("top", (event.pageY - 15) + "px");
+    tooltip.style("opacity", 1).html(html);
+    
+    // 使用 clientX/clientY 因为 tooltip 使用 position: fixed
+    let x = event.clientX + 15;
+    let y = event.clientY - 15;
+    
+    // 获取提示框尺寸
+    const tooltipNode = tooltip.node();
+    const tooltipRect = tooltipNode.getBoundingClientRect();
+    const tooltipWidth = tooltipRect.width;
+    const tooltipHeight = tooltipRect.height;
+    
+    // 边界检测 - 防止超出右边界
+    if (x + tooltipWidth > window.innerWidth) {
+        x = event.clientX - tooltipWidth - 15;
+    }
+    
+    // 边界检测 - 防止超出底部边界
+    if (y + tooltipHeight > window.innerHeight) {
+        y = event.clientY - tooltipHeight - 15;
+    }
+    
+    // 边界检测 - 防止超出左边界
+    if (x < 0) {
+        x = 15;
+    }
+    
+    // 边界检测 - 防止超出顶部边界
+    if (y < 0) {
+        y = 15;
+    }
+    
+    tooltip.style("left", x + "px").style("top", y + "px");
 }
 
 function hideTooltip() {
