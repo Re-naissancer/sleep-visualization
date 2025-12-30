@@ -275,8 +275,7 @@ function drawScatter() {
                 .transition()
                 .duration(200)
                 .style("opacity", 1)
-                .style("stroke-width", 2)
-                .attr("r", d.sleepDuration * 2);
+                .style("stroke-width", 2);
             
             drawRadar(d);
         })
@@ -286,8 +285,7 @@ function drawScatter() {
                 .transition()
                 .duration(200)
                 .style("opacity", 0.6)
-                .style("stroke-width", 0.5)
-                .attr("r", d.sleepDuration * 1.5);
+                .style("stroke-width", 0.5);
             
             drawRadar(null);
         });
@@ -319,7 +317,7 @@ function drawRadar(userData) {
         .append("g")
         .attr("transform", `translate(${containerWidth/2},${containerHeight/2})`);
 
-    const features = ["睡眠时长", "睡眠质量", "压力水平", "运动量", "心率"];
+    const features = ["睡眠时长", "睡眠质量", "压力水平", "运动量", "心率健康"];
     const angleSlice = Math.PI * 2 / features.length;
 
     const normalize = (d) => ({
@@ -327,7 +325,7 @@ function drawRadar(userData) {
         "睡眠质量": (d.sleepQuality / 10) * 10,
         "压力水平": (10 - d.stressLevel),
         "运动量": (d.activityLevel / 100) * 10,
-        "心率": ((80 - Math.abs(d.heartRate - 70)) / 80) * 10
+        "心率健康": Math.max(0, Math.min(10, ((100 - Math.abs(d.heartRate - 70)) / 100) * 10))
     });
 
     // 计算平均值
@@ -346,8 +344,9 @@ function drawRadar(userData) {
         svg.append("circle")
             .attr("r", rScale(level))
             .style("fill", "none")
-            .style("stroke", "rgba(100, 140, 200, 0.2)")
-            .style("stroke-dasharray", "3,3");
+            .style("stroke", level === 10 ? "rgba(100, 140, 200, 0.5)" : "rgba(100, 140, 200, 0.3)")
+            .style("stroke-dasharray", level === 10 ? "none" : "5,5")
+            .style("stroke-width", level === 10 ? 2 : 1);
     });
 
     // 绘制轴线
@@ -361,9 +360,11 @@ function drawRadar(userData) {
             .attr("x2", x).attr("y2", y)
             .style("stroke", "rgba(100, 140, 200, 0.3)");
 
+        // 调整文字位置，睡眠时长（第一个）稍微靠近
+        const distance = i === 0 ? 11.5 : 13;
         svg.append("text")
-            .attr("x", rScale(12) * Math.cos(angle))
-            .attr("y", rScale(12) * Math.sin(angle))
+            .attr("x", rScale(distance) * Math.cos(angle))
+            .attr("y", rScale(distance) * Math.sin(angle))
             .text(feature)
             .style("text-anchor", "middle")
             .style("font-size", "11px")
@@ -727,10 +728,13 @@ function drawClockChart() {
         .append("g")
         .attr("transform", `translate(${containerWidth/2},${containerHeight/2})`);
 
-    // 计算每小时平均活跃人数
-    const hourlyData = d3.range(0, 24).map(hour => {
+    // 提取实际有数据的小时
+    const uniqueHours = [...new Set(behaviorData.map(d => d.hour))].sort((a, b) => a - b);
+    
+    // 计算每小时平均活跃人数（只计算有数据的时段）
+    const activeData = uniqueHours.map(hour => {
         const records = behaviorData.filter(d => d.hour === hour);
-        const avgPeople = d3.mean(records, d => d.peopleCount) || 0;
+        const avgPeople = d3.mean(records, d => d.peopleCount);
         return { hour, people: avgPeople };
     });
 
@@ -739,18 +743,63 @@ function drawClockChart() {
         .range([0, 2 * Math.PI]);
 
     const radiusScale = d3.scaleLinear()
-        .domain([0, d3.max(hourlyData, d => d.people)])
+        .domain([0, d3.max(activeData, d => d.people)])
         .range([0, radius]);
+
+    // 添加渐变定义
+    const gradient = svg.append("defs")
+        .append("radialGradient")
+        .attr("id", "glow-gradient")
+        .attr("cx", "50%")
+        .attr("cy", "50%")
+        .attr("r", "50%");
+    
+    gradient.append("stop")
+        .attr("offset", "0%")
+        .attr("stop-color", COLORS.primary)
+        .attr("stop-opacity", 0.8);
+    
+    gradient.append("stop")
+        .attr("offset", "100%")
+        .attr("stop-color", COLORS.primary)
+        .attr("stop-opacity", 0);
+
+    // 绘制参考圆环（表示不同的活跃度级别）
+    const levels = [0.25, 0.5, 0.75, 1];
+    levels.forEach(level => {
+        svg.append("circle")
+            .attr("r", radius * level)
+            .style("fill", "none")
+            .style("stroke", "rgba(100, 140, 200, 0.3)")
+            .style("stroke-dasharray", "5,5")
+            .style("stroke-width", 1);
+    });
+
+    // 高亮深夜时段背景（22:00 - 3:00的扇形区域）
+    const nightStartAngle = angleScale(22) - Math.PI / 2;
+    const nightEndAngle = angleScale(4) - Math.PI / 2; // 到4点（因为3点后面是4点）
+    
+    const arc = d3.arc()
+        .innerRadius(0)
+        .outerRadius(radius)
+        .startAngle(nightStartAngle)
+        .endAngle(nightEndAngle);
+    
+    svg.append("path")
+        .attr("d", arc)
+        .style("fill", COLORS.danger)
+        .style("fill-opacity", 0.05);
 
     // 绘制时钟圆圈
     svg.append("circle")
         .attr("r", radius)
         .style("fill", "none")
-        .style("stroke", "rgba(100, 140, 200, 0.2)");
+        .style("stroke", "rgba(100, 140, 200, 0.3)")
+        .style("stroke-width", 2);
 
-    // 绘制24小时刻度
-    hourlyData.forEach(d => {
-        const angle = angleScale(d.hour) - Math.PI / 2;
+    // 绘制24小时刻度（显示所有小时）
+    d3.range(0, 24).forEach(hour => {
+        const angle = angleScale(hour) - Math.PI / 2;
         const x1 = radius * 0.9 * Math.cos(angle);
         const y1 = radius * 0.9 * Math.sin(angle);
         const x2 = radius * Math.cos(angle);
@@ -772,42 +821,53 @@ function drawClockChart() {
             .attr("y", labelY)
             .attr("text-anchor", "middle")
             .attr("dominant-baseline", "middle")
-            .text(d.hour)
+            .text(hour)
             .style("font-size", "10px")
             .style("fill", COLORS.text);
     });
 
-    // 绘制活跃度区域
-    const lineGenerator = d3.lineRadial()
-        .angle(d => angleScale(d.hour) - Math.PI / 2)
-        .radius(d => radiusScale(d.people))
-        .curve(d3.curveCardinalClosed);
-
-    svg.append("path")
-        .datum(hourlyData)
-        .attr("d", lineGenerator)
-        .style("fill", COLORS.primary)
-        .style("fill-opacity", 0.3)
-        .style("stroke", COLORS.primary)
-        .style("stroke-width", 2);
-
-    // 高亮深夜时段 (22:00 - 3:00)
-    const nightHours = [22, 23, 0, 1, 2, 3];
-    nightHours.forEach(hour => {
-        const d = hourlyData.find(item => item.hour === hour);
+    // 绘制从中心到数据点的射线
+    activeData.forEach(d => {
         const angle = angleScale(d.hour) - Math.PI / 2;
         const r = radiusScale(d.people);
         const x = r * Math.cos(angle);
         const y = r * Math.sin(angle);
 
+        svg.append("line")
+            .attr("x1", 0)
+            .attr("y1", 0)
+            .attr("x2", x)
+            .attr("y2", y)
+            .style("stroke", COLORS.primary)
+            .style("stroke-width", 1.5)
+            .style("stroke-opacity", 0.4);
+    });
+
+    // 绘制数据点
+    activeData.forEach(d => {
+        const angle = angleScale(d.hour) - Math.PI / 2;
+        const r = radiusScale(d.people);
+        const x = r * Math.cos(angle);
+        const y = r * Math.sin(angle);
+
+        // 添加发光效果的外圈
         svg.append("circle")
             .attr("cx", x)
             .attr("cy", y)
-            .attr("r", 4)
+            .attr("r", 10)
+            .style("fill", "url(#glow-gradient)")
+            .style("opacity", 0.5);
+
+        // 数据点本身
+        svg.append("circle")
+            .attr("cx", x)
+            .attr("cy", y)
+            .attr("r", 5)
             .style("fill", COLORS.danger)
             .style("stroke", "#fff")
-            .style("stroke-width", 1.5)
+            .style("stroke-width", 2)
             .on("mouseover", function(event) {
+                d3.select(this).attr("r", 7);
                 showTooltip(event, `
                     <div class="tooltip-title">${d.hour}:00</div>
                     <div class="tooltip-row">
@@ -816,7 +876,10 @@ function drawClockChart() {
                     </div>
                 `);
             })
-            .on("mouseout", hideTooltip);
+            .on("mouseout", function() {
+                d3.select(this).attr("r", 5);
+                hideTooltip();
+            });
     });
 }
 
@@ -942,7 +1005,16 @@ function drawHourlyTrend() {
     // 轴
     svg.append("g")
         .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x).tickFormat(d => d > 23 ? (d - 24) + ":00" : d + ":00"))
+        .call(d3.axisBottom(x)
+            .tickValues([22, 22.5, 23, 23.5, 24, 24.5, 25, 25.5, 26, 26.5, 27])
+            .tickFormat(d => {
+                const minutes = (d % 1) * 60;
+                let hour = Math.floor(d);
+                if (hour >= 24) {
+                    hour = hour - 24;
+                }
+                return hour + ":" + (minutes === 0 ? "00" : "30");
+            }))
         .attr("class", "axis");
 
     svg.append("g")
@@ -1444,11 +1516,11 @@ function drawHoursSleep() {
         .join("circle")
         .attr("cx", d => x(d.dailyHours))
         .attr("cy", d => y(d.sleepQuality))
-        .attr("r", 4)
+        .attr("r", 7)
         .attr("fill", d => colorScale(d.ageGroup))
-        .attr("opacity", 0.6)
+        .attr("opacity", 0.75)
         .attr("stroke", "#fff")
-        .attr("stroke-width", 0.5)
+        .attr("stroke-width", 1)
         .on("mouseover", function(event, d) {
             showTooltip(event, `
                 <div class="tooltip-title">${d.platform} - ${d.ageGroup}</div>
@@ -1465,11 +1537,11 @@ function drawHoursSleep() {
                     <span>${d.avgSleep}小时</span>
                 </div>
             `);
-            d3.select(this).attr("r", 6).attr("opacity", 1);
+            d3.select(this).attr("opacity", 1).attr("stroke-width", 2);
         })
         .on("mouseout", function() {
             hideTooltip();
-            d3.select(this).attr("r", 4).attr("opacity", 0.6);
+            d3.select(this).attr("opacity", 0.75).attr("stroke-width", 1);
         });
 
     // 图例
@@ -1483,7 +1555,9 @@ function drawHoursSleep() {
             .attr("cy", 6)
             .attr("r", 5)
             .style("fill", colorScale(age))
-            .style("opacity", 0.6);
+            .style("opacity", 0.75)
+            .style("stroke", "#fff")
+            .style("stroke-width", 1);
         g.append("text")
             .attr("x", 15)
             .attr("y", 10)
@@ -1816,7 +1890,7 @@ function drawGlobalBubble() {
 
     const size = d3.scaleLinear()
         .domain([0, d3.max(globalData, d => d.internetHours)])
-        .range([5, 25]);
+        .range([3, 12]);
 
     const regions = Array.from(new Set(globalData.map(d => d.region)));
     const colorScale = d3.scaleOrdinal()
@@ -1870,7 +1944,7 @@ function drawGlobalBubble() {
         .attr("cy", d => y(d.avgSleep))
         .attr("r", d => size(d.internetHours))
         .attr("fill", d => colorScale(d.region))
-        .attr("opacity", 0.6)
+        .attr("opacity", 0.75)
         .attr("stroke", "#fff")
         .attr("stroke-width", 1)
         .on("mouseover", function(event, d) {
@@ -1901,15 +1975,15 @@ function drawGlobalBubble() {
                 .transition()
                 .duration(200)
                 .attr("opacity", 1)
-                .attr("r", d => size(d.internetHours) + 3);
+                .attr("stroke-width", 2);
         })
         .on("mouseout", function(event, d) {
             hideTooltip();
             d3.select(this)
                 .transition()
                 .duration(200)
-                .attr("opacity", 0.6)
-                .attr("r", d => size(d.internetHours));
+                .attr("opacity", 0.75)
+                .attr("stroke-width", 1);
         });
 
     // 图例
