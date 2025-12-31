@@ -41,6 +41,9 @@ Promise.all([
 ]).then(([health, behavior, social, global]) => {
     
     // 处理健康数据
+    const BMI_MAP = { "Normal Weight": "正常", "Normal": "正常", "Overweight": "超重", "Obese": "肥胖" };
+    const DISORDER_MAP = { "None": "无睡眠障碍", "No Disorder": "无睡眠障碍", "Sleep Apnea": "睡眠呼吸暂停", "Insomnia": "失眠" };
+
     healthData = health.map(d => ({
         id: d['Person ID'],
         gender: d.Gender,
@@ -50,10 +53,10 @@ Promise.all([
         sleepQuality: +d['Quality of Sleep'],
         activityLevel: +d['Physical Activity Level'],
         stressLevel: +d['Stress Level'],
-        bmi: d['BMI Category'] === "Normal Weight" ? "Normal" : d['BMI Category'],
+        bmi: BMI_MAP[d['BMI Category']] || BMI_MAP[d['BMI Category']?.trim()] || d['BMI Category'],
         heartRate: +d['Heart Rate'],
         steps: +d['Daily Steps'],
-        disorder: d['Sleep Disorder'] === "None" ? "No Disorder" : d['Sleep Disorder']
+        disorder: DISORDER_MAP[d['Sleep Disorder']] || DISORDER_MAP[d['Sleep Disorder']?.trim()] || d['Sleep Disorder']
     }));
 
     // 处理熬夜行为数据
@@ -141,7 +144,7 @@ function initOverviewPage() {
 
 function updateKPIs() {
     const data = filteredHealthData;
-    const disorderRate = (data.filter(d => d.disorder !== "No Disorder").length / data.length * 100).toFixed(1);
+    const disorderRate = (data.filter(d => d.disorder !== "无睡眠障碍").length / data.length * 100).toFixed(1);
     
     d3.select("#kpi-total").text(data.length);
     d3.select("#kpi-sleep").text(d3.mean(data, d => d.sleepDuration).toFixed(1));
@@ -196,7 +199,7 @@ function drawScatter() {
         .range([height, 0]);
 
     const color = d3.scaleOrdinal()
-        .domain(["Normal", "Overweight", "Obese"])
+        .domain(["正常", "超重", "肥胖"])
         .range([COLORS.success, COLORS.tertiary, COLORS.danger]);
 
     // 添加网格线
@@ -293,7 +296,7 @@ function drawScatter() {
     // 图例
     const legend = d3.select("#scatter-legend");
     legend.html("");
-    ["Normal", "Overweight", "Obese"].forEach(bmi => {
+    ["正常", "超重", "肥胖"].forEach(bmi => {
         const item = legend.append("div").attr("class", "legend-item");
         item.append("div")
             .attr("class", "legend-color")
@@ -415,8 +418,8 @@ function drawStackedBar() {
         .append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    const groups = ["Normal", "Overweight", "Obese"];
-    const subgroups = ["No Disorder", "Sleep Apnea", "Insomnia"];
+    const groups = ["正常", "超重", "肥胖"];
+    const subgroups = ["无睡眠障碍", "睡眠呼吸暂停", "失眠"];
 
     let preparedData = [];
     groups.forEach(g => {
@@ -435,7 +438,7 @@ function drawStackedBar() {
         .padding(0.3);
 
     const y = d3.scaleLinear()
-        .domain([0, d3.max(preparedData, d => d["No Disorder"] + d["Sleep Apnea"] + d["Insomnia"])])
+        .domain([0, d3.max(preparedData, d => d["无睡眠障碍"] + d["睡眠呼吸暂停"] + d["失眠"])])
         .range([height, 0]);
 
     const color = d3.scaleOrdinal()
@@ -504,7 +507,7 @@ function drawStressSleepChart() {
     const data = filteredHealthData;
     const containerWidth = container.node().getBoundingClientRect().width;
     const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 40, bottom: 55, left: 60};
+    const margin = {top: 30, right: 80, bottom: 50, left: 60};
     const width = containerWidth - margin.left - margin.right;
     const height = containerHeight - margin.top - margin.bottom;
 
@@ -514,20 +517,29 @@ function drawStressSleepChart() {
         .append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    const xDomain = [
-        Math.max(0, d3.min(data, d => d.sleepDuration) - 0.5),
-        d3.max(data, d => d.sleepDuration) + 0.5
-    ];
+    // 1. 定义比例尺
+    const x = d3.scaleLinear()
+        .domain([d3.min(data, d => d.sleepDuration) - 0.5, d3.max(data, d => d.sleepDuration) + 0.5])
+        .range([0, width]);
 
-    const x = d3.scaleLinear().domain(xDomain).range([0, width]);
-    const y = d3.scaleLinear().domain([0, 10]).range([height, 0]);
+    const y = d3.scaleLinear()
+        .domain([0, 10])
+        .range([height, 0]);
 
-    const color = d3.scaleLinear()
-        .domain([4, 7, 9])
-        .range([COLORS.success, COLORS.tertiary, COLORS.danger])
-        .clamp(true);
+    // 2. 计算密度等高线
+    const densityData = d3.contourDensity()
+        .x(d => x(d.sleepDuration))
+        .y(d => y(d.stressLevel))
+        .size([width, height])
+        .bandwidth(25) // 平滑度
+        .thresholds(20) // 层级数量
+        (data);
 
-    // 背景网格
+    // 3. 颜色比例尺 (Turbo 适合热力图)
+    const color = d3.scaleSequential(d3.interpolateTurbo)
+        .domain([0, d3.max(densityData, d => d.value)]);
+
+    // 4. 绘制背景网格
     svg.append("g")
         .attr("class", "grid")
         .attr("transform", `translate(0,${height})`)
@@ -539,133 +551,113 @@ function drawStressSleepChart() {
         .call(d3.axisLeft(y).tickSize(-width).tickFormat(""))
         .style("stroke-opacity", 0.1);
 
-    // 回归线（压力 = a * 睡眠时长 + b）
-    const n = data.length;
-    const sumX = d3.sum(data, d => d.sleepDuration);
-    const sumY = d3.sum(data, d => d.stressLevel);
-    const sumXY = d3.sum(data, d => d.sleepDuration * d.stressLevel);
-    const sumXX = d3.sum(data, d => d.sleepDuration * d.sleepDuration);
-    const denominator = n * sumXX - sumX * sumX;
+    // 5. 绘制等高线路径
+    svg.append("g")
+        .selectAll("path")
+        .data(densityData)
+        .enter().append("path")
+        .attr("d", d3.geoPath())
+        .attr("fill", d => color(d.value))
+        .attr("stroke", "none")
+        .style("opacity", 0.8);
 
-    if (denominator !== 0) {
-        const slope = (n * sumXY - sumX * sumY) / denominator;
-        const intercept = (sumY - slope * sumX) / n;
-        const lineX = [xDomain[0], xDomain[1]];
-        const lineY = lineX.map(xVal => {
-            const yVal = slope * xVal + intercept;
-            return Math.max(0, Math.min(10, yVal));
-        });
-
-        svg.append("line")
-            .attr("x1", x(lineX[0]))
-            .attr("y1", y(lineY[0]))
-            .attr("x2", x(lineX[1]))
-            .attr("y2", y(lineY[1]))
-            .style("stroke", COLORS.secondary)
-            .style("stroke-width", 2)
-            .style("opacity", 0.9);
-    }
-
-    // 散点
+    // 6. 添加散点 (低透明度，用于展示具体分布)
     svg.selectAll("circle")
         .data(data)
-        .join("circle")
+        .enter().append("circle")
         .attr("cx", d => x(d.sleepDuration))
         .attr("cy", d => y(d.stressLevel))
-        .attr("r", 5)
-        .style("fill", d => color(d.stressLevel))
-        .style("opacity", 0.7)
-        .style("stroke", "#0a0e1a")
-        .style("stroke-width", 1)
-        .on("mouseover", (event, d) => {
-            showTooltip(event, `
-                <div class="tooltip-title">${d.occupation}</div>
-                <div class="tooltip-row">
-                    <span>睡眠时长:</span>
-                    <span>${d.sleepDuration} 小时</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>压力水平:</span>
-                    <span>${d.stressLevel}/10</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>睡眠质量:</span>
-                    <span>${d.sleepQuality}/10</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>BMI/步数:</span>
-                    <span>${d.bmi}, ${d3.format(",")(d.steps)} 步</span>
-                </div>
-            `);
-            d3.select(event.currentTarget)
-                .transition()
-                .duration(150)
-                .attr("r", 7)
-                .style("opacity", 1);
-        })
-        .on("mouseout", (event) => {
-            hideTooltip();
-            d3.select(event.currentTarget)
-                .transition()
-                .duration(150)
-                .attr("r", 5)
-                .style("opacity", 0.7);
-        });
+        .attr("r", 2)
+        .style("fill", "#fff")
+        .style("opacity", 0.2)
+        .style("pointer-events", "none"); // 不干扰交互
 
+    // 7. 坐标轴
     svg.append("g")
         .attr("transform", `translate(0,${height})`)
         .call(d3.axisBottom(x))
-        .attr("class", "axis");
+        .attr("class", "axis")
+        .style("font-size", "12px");
 
     svg.append("g")
         .call(d3.axisLeft(y))
-        .attr("class", "axis");
+        .attr("class", "axis")
+        .style("font-size", "12px");
 
+    // 8. 轴标签
     svg.append("text")
         .attr("x", width / 2)
-        .attr("y", height + 45)
+        .attr("y", height + 40)
         .attr("fill", COLORS.text)
         .style("text-anchor", "middle")
-        .style("font-size", "12px")
         .text("睡眠时长 (小时)");
 
     svg.append("text")
         .attr("transform", "rotate(-90)")
-        .attr("y", -45)
+        .attr("y", -40)
         .attr("x", -height / 2)
         .attr("fill", COLORS.text)
         .style("text-anchor", "middle")
-        .style("font-size", "12px")
         .text("压力水平 (1-10)");
 
-    // 图例
-    const legend = svg.append("g").attr("transform", `translate(${width - 120}, ${10})`);
+    // 9. 添加热力图图例
+    const legendHeight = 150;
+    const legendWidth = 15;
+    
+    const legendSvg = svg.append("g")
+        .attr("transform", `translate(${width + 20}, ${(height - legendHeight) / 2})`);
 
     const defs = svg.append("defs");
-    const gradient = defs.append("linearGradient")
-        .attr("id", "stress-gradient")
+    const linearGradient = defs.append("linearGradient")
+        .attr("id", "linear-gradient")
         .attr("x1", "0%")
-        .attr("x2", "100%")
-        .attr("y1", "0%")
+        .attr("y1", "100%")
+        .attr("x2", "0%")
         .attr("y2", "0%");
 
-    gradient.append("stop").attr("offset", "0%").attr("stop-color", COLORS.success);
-    gradient.append("stop").attr("offset", "50%").attr("stop-color", COLORS.tertiary);
-    gradient.append("stop").attr("offset", "100%").attr("stop-color", COLORS.danger);
+    // 生成渐变色
+    const numStops = 10;
+    for (let i = 0; i <= numStops; i++) {
+        const offset = i / numStops;
+        linearGradient.append("stop")
+            .attr("offset", `${offset * 100}%`)
+            .attr("stop-color", d3.interpolateTurbo(offset));
+    }
 
-    legend.append("rect")
-        .attr("x", 0)
-        .attr("y", 0)
-        .attr("width", 100)
-        .attr("height", 10)
-        .style("fill", "url(#stress-gradient)");
+    legendSvg.append("rect")
+        .attr("width", legendWidth)
+        .attr("height", legendHeight)
+        .style("fill", "url(#linear-gradient)")
+        .style("stroke", "#ccc")
+        .style("stroke-width", 0.5);
 
-    legend.append("text")
-        .attr("x", 0)
-        .attr("y", -6)
+    // 图例标签
+    legendSvg.append("text")
+        .attr("x", legendWidth + 5)
+        .attr("y", 10)
         .style("fill", COLORS.text)
-        .style("font-size", "11px")
-        .text("压力梯度 (颜色)");
+        .style("font-size", "10px")
+        .text("高密度");
+
+    legendSvg.append("text")
+        .attr("x", legendWidth + 5)
+        .attr("y", legendHeight)
+        .style("fill", COLORS.text)
+        .style("font-size", "10px")
+        .text("低密度");
+
+    // 10. 添加"热点"标注 (找出密度最高的区域)
+    if (densityData.length > 0) {
+        // 简单地在图表上方添加说明
+        svg.append("text")
+            .attr("x", width - 10)
+            .attr("y", 20)
+            .attr("text-anchor", "end")
+            .style("fill", COLORS.text)
+            .style("font-size", "12px")
+            .style("font-style", "italic")
+            .text("颜色越暖表示人群越集中");
+    }
 }
 
 // ===== 第二页：熬夜行为分析 =====
@@ -1271,7 +1263,7 @@ function drawSocialImpact(ageGroup) {
     
     const containerWidth = container.node().getBoundingClientRect().width;
     const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 30, bottom: 60, left: 60};
+    const margin = {top: 20, right: 160, bottom: 60, left: 60};
     const width = containerWidth - margin.left - margin.right;
     const height = containerHeight - margin.top - margin.bottom;
 
@@ -1297,6 +1289,10 @@ function drawSocialImpact(ageGroup) {
         .range([0, width])
         .padding(0.3);
 
+    const colorScale = d3.scaleOrdinal()
+        .domain(platforms)
+        .range(d3.schemeTableau10);
+
     const y1 = d3.scaleLinear()
         .domain([0, 100])
         .range([height, 0]);
@@ -1320,8 +1316,8 @@ function drawSocialImpact(ageGroup) {
         .attr("y", d => y1(d.avgUsage))
         .attr("width", x.bandwidth())
         .attr("height", d => height - y1(d.avgUsage))
-        .attr("fill", COLORS.pink)
-        .attr("opacity", 0.6)
+        .attr("fill", d => colorScale(d.platform))
+        .attr("opacity", 0.7)
         .on("mouseover", function(event, d) {
             showTooltip(event, `
                 <div class="tooltip-title">${d.platform}</div>
@@ -1334,11 +1330,11 @@ function drawSocialImpact(ageGroup) {
                     <span>${d.avgSleep.toFixed(1)}/10</span>
                 </div>
             `);
-            d3.select(this).attr("opacity", 0.8);
+            d3.select(this).attr("opacity", 0.95);
         })
         .on("mouseout", function() {
             hideTooltip();
-            d3.select(this).attr("opacity", 0.6);
+            d3.select(this).attr("opacity", 0.7);
         });
 
     // 绘制折线图（睡眠质量）
@@ -1394,47 +1390,39 @@ function drawSocialImpact(ageGroup) {
         .call(d3.axisRight(y2))
         .attr("class", "axis");
 
-    svg.append("text")
-        .attr("transform", `rotate(-90)`)
-        .attr("y", width + 45)
-        .attr("x", -height / 2)
-        .attr("fill", COLORS.success)
-        .style("text-anchor", "middle")
-        .style("font-size", "11px")
-        .text("睡眠质量 (1-10)");
-
-    // 图例
-    const legend = svg.append("g").attr("transform", `translate(10, 10)`);
-    
-    const legendData = [
-        { label: "深夜使用率", color: COLORS.pink, type: "rect" },
-        { label: "睡眠质量", color: COLORS.success, type: "line" }
-    ];
-
-    legendData.forEach((item, i) => {
-        const g = legend.append("g").attr("transform", `translate(0,${i * 20})`);
-        if (item.type === "rect") {
-            g.append("rect")
-                .attr("width", 15)
-                .attr("height", 15)
-                .style("fill", item.color)
-                .style("opacity", 0.6);
-        } else {
-            g.append("line")
-                .attr("x1", 0)
-                .attr("x2", 15)
-                .attr("y1", 7)
-                .attr("y2", 7)
-                .style("stroke", item.color)
-                .style("stroke-width", 3);
-        }
+    // 图例（平台颜色 + 睡眠质量线）
+    const legend = svg.append("g").attr("transform", `translate(${width + 20}, 10)`);
+    platforms.forEach((platform, i) => {
+        const g = legend.append("g").attr("transform", `translate(0,${i * 18})`);
+        g.append("rect")
+            .attr("x", 0)
+            .attr("y", -6)
+            .attr("width", 12)
+            .attr("height", 12)
+            .attr("rx", 2)
+            .style("fill", colorScale(platform));
         g.append("text")
-            .attr("x", 20)
-            .attr("y", 12)
-            .text(item.label)
+            .attr("x", 18)
+            .attr("y", 4)
+            .text(platform)
             .style("fill", COLORS.text)
             .style("font-size", "11px");
     });
+
+    const lineLegend = legend.append("g").attr("transform", `translate(0,${platforms.length * 18 + 10})`);
+    lineLegend.append("line")
+        .attr("x1", 0)
+        .attr("x2", 16)
+        .attr("y1", 4)
+        .attr("y2", 4)
+        .style("stroke", COLORS.success)
+        .style("stroke-width", 3);
+    lineLegend.append("text")
+        .attr("x", 20)
+        .attr("y", 8)
+        .text("睡眠质量")
+        .style("fill", COLORS.text)
+        .style("font-size", "11px");
 }
 
 // 各年龄段深夜使用率
@@ -1473,9 +1461,9 @@ function drawAgeUsage() {
         .domain([0, 100])
         .range([height, 0]);
 
-    const colorScale = d3.scaleSequential()
-        .domain([0, 100])
-        .interpolator(d3.interpolateRgb(COLORS.success, COLORS.danger));
+    const colorScale = d3.scaleOrdinal()
+        .domain(["18-24", "25-34", "35-44", "45+"])
+        .range([COLORS.danger, COLORS.tertiary, COLORS.secondary, COLORS.success]);
 
     svg.append("g")
         .attr("transform", `translate(0,${height})`)
@@ -1501,7 +1489,7 @@ function drawAgeUsage() {
         .attr("y", d => y(d.avgUsage))
         .attr("width", x.bandwidth())
         .attr("height", d => height - y(d.avgUsage))
-        .attr("fill", d => colorScale(d.avgUsage))
+        .attr("fill", d => colorScale(d.ageGroup))
         .attr("rx", 5)
         .on("mouseover", function(event, d) {
             showTooltip(event, `
@@ -1529,6 +1517,27 @@ function drawAgeUsage() {
         .style("font-size", "12px")
         .style("font-weight", "600")
         .text(d => d.avgUsage.toFixed(0) + "%");
+
+    // 图例
+    const legend = svg.append("g").attr("transform", `translate(${width - 100}, 10)`);
+    const legendAgeGroups = ["18-24", "25-34", "35-44", "45+"];
+    
+    legendAgeGroups.forEach((age, i) => {
+        const g = legend.append("g").attr("transform", `translate(0,${i * 20})`);
+        g.append("circle")
+            .attr("cx", 6)
+            .attr("cy", 6)
+            .attr("r", 5)
+            .style("fill", colorScale(age))
+            .style("stroke", "#fff")
+            .style("stroke-width", 1);
+        g.append("text")
+            .attr("x", 15)
+            .attr("y", 10)
+            .text(age)
+            .style("fill", COLORS.text)
+            .style("font-size", "10px");
+    });
 }
 
 // 使用时长与睡眠质量关系
@@ -1589,15 +1598,6 @@ function drawHoursSleep() {
         .style("text-anchor", "middle")
         .style("font-size", "11px")
         .text("日均使用时长 (小时)");
-
-    svg.append("text")
-        .attr("transform", "rotate(-90)")
-        .attr("y", -45)
-        .attr("x", -height / 2)
-        .attr("fill", COLORS.text)
-        .style("text-anchor", "middle")
-        .style("font-size", "11px")
-        .text("睡眠质量 (1-10)");
 
     // 绘制散点
     svg.selectAll("circle")
@@ -1670,7 +1670,7 @@ function drawAddiction() {
 
     const containerWidth = container.node().getBoundingClientRect().width;
     const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 30, bottom: 40, left: 100};
+    const margin = {top: 20, right: 140, bottom: 40, left: 100};
     const width = containerWidth - margin.left - margin.right;
     const height = containerHeight - margin.top - margin.bottom;
 
@@ -1689,9 +1689,9 @@ function drawAddiction() {
         .range([0, height])
         .padding(0.3);
 
-    const colorScale = d3.scaleSequential()
-        .domain([0, 10])
-        .interpolator(d3.interpolateRgb(COLORS.success, COLORS.danger));
+    const colorScale = d3.scaleOrdinal()
+        .domain(platforms)
+        .range(d3.schemeTableau10);
 
     svg.append("g")
         .attr("transform", `translate(0,${height})`)
@@ -1709,7 +1709,7 @@ function drawAddiction() {
         .attr("y", d => y(d.platform))
         .attr("width", d => x(d.addiction))
         .attr("height", y.bandwidth())
-        .attr("fill", d => colorScale(d.addiction))
+        .attr("fill", d => colorScale(d.platform))
         .attr("rx", 5)
         .on("mouseover", function(event, d) {
             showTooltip(event, `
@@ -1725,6 +1725,25 @@ function drawAddiction() {
             hideTooltip();
             d3.select(this).attr("opacity", 1);
         });
+
+    // 图例
+    const legend = svg.append("g").attr("transform", `translate(${width + 20}, 0)`);
+    platforms.forEach((platform, i) => {
+        const g = legend.append("g").attr("transform", `translate(0,${i * 20})`);
+        g.append("rect")
+            .attr("x", 0)
+            .attr("y", -5)
+            .attr("width", 12)
+            .attr("height", 12)
+            .attr("rx", 2)
+            .style("fill", colorScale(platform));
+        g.append("text")
+            .attr("x", 18)
+            .attr("y", 5)
+            .text(platform)
+            .style("fill", COLORS.text)
+            .style("font-size", "10px");
+    });
 
     // 数值标签
     svg.selectAll(".label")
