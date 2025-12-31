@@ -964,7 +964,7 @@ function drawClockChart() {
     });
 }
 
-// 活动类型饼图
+// 活动类型玫瑰图 (Nightingale Rose Chart)
 function drawActivityPie() {
     const container = d3.select("#activity-pie-chart");
     container.selectAll("*").remove();
@@ -995,22 +995,43 @@ function drawActivityPie() {
         .domain(["社交媒体", "游戏", "工作学习", "视频", "浏览"])
         .range([COLORS.pink, COLORS.danger, COLORS.tertiary, COLORS.secondary, COLORS.success]);
 
-    const pie = d3.pie().value(d => d.value).sort(null);
-    const arc = d3.arc().innerRadius(0).outerRadius(radius);
-    const arcHover = d3.arc().innerRadius(0).outerRadius(radius + 8);
+    // 玫瑰图比例尺
+    const radiusScale = d3.scaleLinear()
+        .domain([0, d3.max(pieData, d => d.value)])
+        .range([20, radius]); // 20是内圆半径
 
+    const angleScale = d3.scaleBand()
+        .domain(pieData.map(d => d.activity))
+        .range([0, 2 * Math.PI])
+        .align(0);
+
+    const arc = d3.arc()
+        .innerRadius(20)
+        .outerRadius(d => radiusScale(d.value))
+        .startAngle(d => angleScale(d.activity))
+        .endAngle(d => angleScale(d.activity) + angleScale.bandwidth())
+        .padAngle(0.05)
+        .padRadius(20)
+        .cornerRadius(4);
+
+    // 绘制花瓣
     svg.selectAll("path")
-        .data(pie(pieData))
+        .data(pieData)
         .join("path")
         .attr("d", arc)
-        .attr("fill", d => color(d.data.activity))
+        .attr("fill", d => color(d.activity))
         .attr("stroke", "#0a0e1a")
-        .style("stroke-width", "2px")
+        .style("stroke-width", "1px")
+        .style("opacity", 0.8)
         .on("mouseover", function(event, d) {
             const total = d3.sum(pieData, item => item.value);
-            const pct = (d.data.value / total * 100).toFixed(1);
+            const pct = (d.value / total * 100).toFixed(1);
             showTooltip(event, `
-                <div class="tooltip-title">${d.data.activity}</div>
+                <div class="tooltip-title">${d.activity}</div>
+                <div class="tooltip-row">
+                    <span>活跃度:</span>
+                    <span>${d.value.toFixed(0)}</span>
+                </div>
                 <div class="tooltip-row">
                     <span>占比:</span>
                     <span>${pct}%</span>
@@ -1019,33 +1040,34 @@ function drawActivityPie() {
             d3.select(this)
                 .transition()
                 .duration(200)
-                .attr("d", arcHover);
+                .style("opacity", 1)
+                .attr("transform", "scale(1.05)");
         })
         .on("mouseout", function() {
             hideTooltip();
             d3.select(this)
                 .transition()
                 .duration(200)
-                .attr("d", arc);
+                .style("opacity", 0.8)
+                .attr("transform", "scale(1)");
         });
 
     // 添加标签
     svg.selectAll("text")
-        .data(pie(pieData))
+        .data(pieData)
         .join("text")
         .attr("transform", d => {
-            const [x, y] = arc.centroid(d);
-            return `translate(${x * 1.4},${y * 1.4})`;
+            const angle = angleScale(d.activity) + angleScale.bandwidth() / 2 - Math.PI / 2;
+            const r = radiusScale(d.value) + 15;
+            const x = r * Math.cos(angle);
+            const y = r * Math.sin(angle);
+            return `translate(${x},${y})`;
         })
         .attr("text-anchor", "middle")
         .style("font-size", "11px")
         .style("fill", COLORS.text)
         .style("font-weight", "500")
-        .text(d => {
-            const total = d3.sum(pieData, item => item.value);
-            const pct = (d.data.value / total * 100);
-            return pct > 5 ? d.data.activity : "";
-        });
+        .text(d => d.activity);
 }
 
 // 每小时人数趋势
@@ -1656,7 +1678,7 @@ function drawHoursSleep() {
     });
 }
 
-// 平台成瘾指数对比
+// 平台成瘾指数对比 - 径向条形图 (Radial Bar Chart / Activity Rings)
 function drawAddiction() {
     const container = d3.select("#addiction-chart");
     container.selectAll("*").remove();
@@ -1666,96 +1688,129 @@ function drawAddiction() {
     const addictionData = platforms.map(platform => ({
         platform,
         addiction: d3.mean(socialData.filter(d => d.platform === platform), d => d.addiction)
-    })).sort((a, b) => b.addiction - a.addiction);
+    })).sort((a, b) => b.addiction - a.addiction); // 降序排列
 
     const containerWidth = container.node().getBoundingClientRect().width;
     const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 140, bottom: 40, left: 100};
-    const width = containerWidth - margin.left - margin.right;
-    const height = containerHeight - margin.top - margin.bottom;
+    const width = containerWidth;
+    const height = containerHeight;
+    const radius = Math.min(width, height) / 2;
 
     const svg = container.append("svg")
-        .attr("width", containerWidth)
-        .attr("height", containerHeight)
+        .attr("width", width)
+        .attr("height", height)
         .append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
+        .attr("transform", `translate(${width / 2},${height / 2})`);
 
-    const x = d3.scaleLinear()
-        .domain([0, 10])
-        .range([0, width]);
-
-    const y = d3.scaleBand()
-        .domain(addictionData.map(d => d.platform))
-        .range([0, height])
-        .padding(0.3);
+    // 环形参数
+    const numRings = addictionData.length;
+    const ringWidth = 12;
+    const gap = 8;
+    const innerRadius = 30;
+    
+    // 角度比例尺 (0-5分 映射到 0-270度，留出缺口放图例或文字)
+    const maxScore = 5; // 假设满分是5
+    const angleScale = d3.scaleLinear()
+        .domain([0, maxScore]) 
+        .range([0, 1.5 * Math.PI]); // 270度
 
     const colorScale = d3.scaleOrdinal()
         .domain(platforms)
         .range(d3.schemeTableau10);
 
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis");
+    // 绘制环形
+    addictionData.forEach((d, i) => {
+        // 外圈是最大值，内圈是最小值，或者反过来
+        // 这里让最大值在最外圈，视觉上更明显
+        const r = innerRadius + (numRings - 1 - i) * (ringWidth + gap);
+        
+        // 背景环
+        const bgArc = d3.arc()
+            .innerRadius(r)
+            .outerRadius(r + ringWidth)
+            .startAngle(0)
+            .endAngle(1.5 * Math.PI)
+            .cornerRadius(ringWidth / 2);
+            
+        svg.append("path")
+            .attr("d", bgArc)
+            .style("fill", "#333")
+            .style("opacity", 0.3);
+            
+        // 数值环
+        const valArc = d3.arc()
+            .innerRadius(r)
+            .outerRadius(r + ringWidth)
+            .startAngle(0)
+            .endAngle(angleScale(d.addiction))
+            .cornerRadius(ringWidth / 2);
+            
+        svg.append("path")
+            .attr("d", valArc)
+            .style("fill", colorScale(d.platform))
+            .on("mouseover", (event) => {
+                 showTooltip(event, `
+                    <div class="tooltip-title">${d.platform}</div>
+                    <div class="tooltip-row">
+                        <span>成瘾指数:</span>
+                        <span>${d.addiction.toFixed(1)}/5</span>
+                    </div>
+                `);
+                 d3.select(event.currentTarget).style("opacity", 0.8);
+            })
+            .on("mouseout", (event) => {
+                hideTooltip();
+                d3.select(event.currentTarget).style("opacity", 1);
+            });
 
-    svg.append("g")
-        .call(d3.axisLeft(y))
-        .attr("class", "axis");
-
-    svg.selectAll(".bar")
-        .data(addictionData)
-        .join("rect")
-        .attr("x", 0)
-        .attr("y", d => y(d.platform))
-        .attr("width", d => x(d.addiction))
-        .attr("height", y.bandwidth())
-        .attr("fill", d => colorScale(d.platform))
-        .attr("rx", 5)
-        .on("mouseover", function(event, d) {
-            showTooltip(event, `
-                <div class="tooltip-title">${d.platform}</div>
-                <div class="tooltip-row">
-                    <span>成瘾指数:</span>
-                    <span>${d.addiction.toFixed(1)}/10</span>
-                </div>
-            `);
-            d3.select(this).attr("opacity", 0.8);
-        })
-        .on("mouseout", function() {
-            hideTooltip();
-            d3.select(this).attr("opacity", 1);
-        });
-
-    // 图例
-    const legend = svg.append("g").attr("transform", `translate(${width + 20}, 0)`);
-    platforms.forEach((platform, i) => {
-        const g = legend.append("g").attr("transform", `translate(0,${i * 20})`);
-        g.append("rect")
-            .attr("x", 0)
-            .attr("y", -5)
-            .attr("width", 12)
-            .attr("height", 12)
-            .attr("rx", 2)
-            .style("fill", colorScale(platform));
-        g.append("text")
-            .attr("x", 18)
-            .attr("y", 5)
-            .text(platform)
+        // 在环的起点添加图标或文字
+        // 这里简单添加文字标签在环的左侧（缺口处）
+        // 计算缺口处的坐标
+        // 270度缺口在左上角 (1.5 PI) 到 0度 (12点钟? 不，d3 arc 0度是12点钟顺时针)
+        // d3.arc 0 is at 12 o'clock usually? No, 0 is at 12 o'clock if we rotate?
+        // Standard d3.arc: 0 is up (12 o'clock), PI/2 is right (3 o'clock).
+        // Wait, standard math 0 is right. d3.arc 0 is 12 o'clock.
+        // Let's check d3 docs mentally: 0 is 12 o'clock.
+        // So 0 to 1.5 PI is 12 -> 3 -> 6 -> 9. The gap is 9 to 12 (top-left).
+        
+        // Let's put labels in the gap area.
+        svg.append("text")
+            .attr("x", -10) 
+            .attr("y", -r - ringWidth/2 + 4) // 垂直对齐到环中心
+            .attr("text-anchor", "end")
+            .text(d.platform)
             .style("fill", COLORS.text)
-            .style("font-size", "10px");
+            .style("font-size", "10px")
+            .style("font-weight", "bold");
+            
+        // 在环的终点添加数值
+        const endAngle = angleScale(d.addiction);
+        const centroid = d3.arc()
+            .innerRadius(r)
+            .outerRadius(r + ringWidth)
+            .startAngle(endAngle - 0.1) // slightly back
+            .endAngle(endAngle)
+            .centroid();
+            
+        // 如果数值太小，文字可能会重叠，这里简化处理
+        // 也可以把数值放在标签旁边
+        svg.append("text")
+            .attr("x", -10)
+            .attr("y", -r - ringWidth/2 + 14) // 标签下方
+            .attr("text-anchor", "end")
+            .text(d.addiction.toFixed(1))
+            .style("fill", colorScale(d.platform))
+            .style("font-size", "9px");
     });
-
-    // 数值标签
-    svg.selectAll(".label")
-        .data(addictionData)
-        .join("text")
-        .attr("x", d => x(d.addiction) + 5)
-        .attr("y", d => y(d.platform) + y.bandwidth() / 2)
+    
+    // 中心添加标题
+    svg.append("text")
+        .attr("text-anchor", "middle")
         .attr("dy", "0.35em")
+        .text("成瘾指数")
         .style("fill", COLORS.text)
-        .style("font-size", "11px")
-        .style("font-weight", "600")
-        .text(d => d.addiction.toFixed(1));
+        .style("font-size", "12px")
+        .style("font-weight", "bold");
 }
 
 // ===== 第四页：全球对比 =====
