@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>深夜探索 | 熬夜行为可视化分析</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
     
@@ -256,6 +257,14 @@
             min-height: 380px;
         }
 
+        .chart-panel.tall {
+            min-height: 620px;
+        }
+
+        .chart-panel.tall .chart-body {
+            min-height: 520px;
+        }
+
         .chart-panel:hover {
             border-color: rgba(0, 212, 255, 0.3);
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
@@ -491,13 +500,13 @@
     </div>
     <div class="nav-tabs">
         <button class="nav-tab active" data-page="overview">
-            <i class="fa-solid fa-chart-pie"></i> 总览
+            <i class="fa-solid fa-chart-pie"></i> 健康影响
         </button>
         <button class="nav-tab" data-page="behavior">
             <i class="fa-solid fa-clock"></i> 熬夜行为
         </button>
         <button class="nav-tab" data-page="health">
-            <i class="fa-solid fa-heartbeat"></i> 健康影响
+            <i class="fa-solid fa-heartbeat"></i> 社交媒体
         </button>
         <button class="nav-tab" data-page="global">
             <i class="fa-solid fa-globe"></i> 全球对比
@@ -511,44 +520,6 @@
         <div class="page-header">
             <h1 class="page-title">🌙 深夜数据观察站</h1>
             <p class="page-subtitle">探索现代人的熬夜行为模式与健康影响</p>
-        </div>
-
-        <div class="kpi-grid">
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, var(--accent), #0891b2);">
-                    <i class="fa-solid fa-users" style="color: white;"></i>
-                </div>
-                <div class="kpi-label">样本总数</div>
-                <div class="kpi-value" id="kpi-total">0</div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, var(--secondary), #a855f7);">
-                    <i class="fa-solid fa-bed" style="color: white;"></i>
-                </div>
-                <div class="kpi-label">平均睡眠时长</div>
-                <div class="kpi-value" id="kpi-sleep">0<span class="kpi-unit">小时</span></div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, var(--danger), #f97316);">
-                    <i class="fa-solid fa-fire-flame-curved" style="color: white;"></i>
-                </div>
-                <div class="kpi-label">平均压力指数</div>
-                <div class="kpi-value" id="kpi-stress">0<span class="kpi-unit">/10</span></div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, var(--success), #059669);">
-                    <i class="fa-solid fa-person-walking" style="color: white;"></i>
-                </div>
-                <div class="kpi-label">日均步数</div>
-                <div class="kpi-value" id="kpi-steps">0</div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, var(--pink), #db2777);">
-                    <i class="fa-solid fa-triangle-exclamation" style="color: white;"></i>
-                </div>
-                <div class="kpi-label">睡眠障碍率</div>
-                <div class="kpi-value" id="kpi-disorder">0<span class="kpi-unit">%</span></div>
-            </div>
         </div>
 
         <div class="charts-grid">
@@ -610,10 +581,7 @@
             <p class="page-subtitle">了解人们在深夜都在做什么</p>
         </div>
 
-        <div class="info-box">
-            <i class="fa-solid fa-info-circle"></i>
-            <p>此页面展示深夜（22:00-03:00）期间的用户行为数据，包括社交媒体、游戏、工作学习等活动分布。</p>
-        </div>
+        
 
         <div class="charts-grid">
             <div class="chart-panel col-8">
@@ -640,16 +608,6 @@
                 <div class="chart-body" id="clock-chart"></div>
             </div>
 
-            <div class="chart-panel col-5">
-                <div class="chart-header">
-                    <div class="chart-title">
-                        <i class="fa-solid fa-chart-pie" style="color: var(--tertiary);"></i>
-                        <span>深夜活动类型占比</span>
-                    </div>
-                </div>
-                <div class="chart-body" id="activity-pie-chart"></div>
-            </div>
-
             <div class="chart-panel col-7">
                 <div class="chart-header">
                     <div class="chart-title">
@@ -659,13 +617,23 @@
                 </div>
                 <div class="chart-body" id="hourly-trend-chart"></div>
             </div>
+
+            <div class="chart-panel col-5">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-chart-pie" style="color: var(--tertiary);"></i>
+                        <span>深夜活动类型占比</span>
+                    </div>
+                </div>
+                <div class="chart-body" id="activity-pie-chart"></div>
+            </div>
         </div>
     </section>
 
     <!-- ========== 第三页：健康影响分析 ========== -->
     <section class="page-section" id="page-health">
         <div class="page-header">
-            <h1 class="page-title">💊 健康影响分析</h1>
+            <h1 class="page-title">💊 社交媒体分析</h1>
             <p class="page-subtitle">探索社交媒体使用与睡眠健康的关联</p>
         </div>
 
@@ -729,21 +697,7 @@
         </div>
 
         <div class="charts-grid">
-            <div class="chart-panel col-6">
-                <div class="chart-header">
-                    <div class="chart-title">
-                        <i class="fa-solid fa-ranking-star" style="color: var(--tertiary);"></i>
-                        <span>各国平均睡眠时长排名</span>
-                    </div>
-                    <div class="chart-controls">
-                        <button class="chart-btn active" id="sortAsc">升序</button>
-                        <button class="chart-btn" id="sortDesc">降序</button>
-                    </div>
-                </div>
-                <div class="chart-body" id="global-ranking-chart"></div>
-            </div>
-
-            <div class="chart-panel col-6">
+            <div class="chart-panel col-12">
                 <div class="chart-header">
                     <div class="chart-title">
                         <i class="fa-solid fa-earth-americas" style="color: var(--secondary);"></i>
@@ -753,15 +707,30 @@
                 <div class="chart-body" id="region-chart"></div>
             </div>
 
-            <div class="chart-panel col-12">
+            <div class="chart-panel col-6 tall">
                 <div class="chart-header">
                     <div class="chart-title">
-                        <i class="fa-solid fa-diagram-project" style="color: var(--accent);"></i>
-                        <span>睡眠时长 vs 工作时长 vs 互联网使用</span>
+                        <i class="fa-solid fa-ranking-star" style="color: var(--tertiary);"></i>
+                        <span>各国平均睡眠时长排名</span>
+                    </div>
+                    <div id="ranking-legend" style="display: flex; align-items: center; gap: 8px; height: 24px;"></div>
+                    <div class="chart-controls">
+                        <button class="chart-btn active" id="sortAsc">升序</button>
+                        <button class="chart-btn" id="sortDesc">降序</button>
                     </div>
                 </div>
-                <div class="chart-body" id="global-bubble-chart"></div>
-                <div class="legend" id="global-legend"></div>
+                <div class="chart-body" id="global-ranking-chart"></div>
+            </div>
+
+            <div class="chart-panel col-6 tall">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-globe-asia" style="color: var(--accent);"></i>
+                        <span>全球熬夜率地图</span>
+                    </div>
+                    <div id="globe-legend" style="display: flex; align-items: center; gap: 8px; height: 24px;"></div>
+                </div>
+                <div class="chart-body" id="global-map-chart"></div>
             </div>
         </div>
     </section>

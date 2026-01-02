@@ -15,6 +15,8 @@ let behaviorData = [];
 let socialData = [];
 let globalData = [];
 let filteredHealthData = [];
+let worldGeoData = null;
+let worldRotation = [0, -10];
 
 const tooltip = d3.select("#tooltip");
 
@@ -714,6 +716,7 @@ function drawHeatmap(dayType) {
     activities.forEach((activity, i) => {
         data.forEach(d => {
             svg.append("rect")
+                .attr("data-hour", d.hour) // 添加 data-hour 属性用于联动
                 .attr("x", x(d.hour + ":00"))
                 .attr("y", y(activityLabels[i]))
                 .attr("width", x.bandwidth())
@@ -995,10 +998,10 @@ function drawActivityPie() {
         .domain(["社交媒体", "游戏", "工作学习", "视频", "浏览"])
         .range([COLORS.pink, COLORS.danger, COLORS.tertiary, COLORS.secondary, COLORS.success]);
 
-    // 玫瑰图比例尺
-    const radiusScale = d3.scaleLinear()
+    // 玫瑰图比例尺 - 使用sqrt刻度使面积与数据值成正比
+    const radiusScale = d3.scaleSqrt()
         .domain([0, d3.max(pieData, d => d.value)])
-        .range([20, radius]); // 20是内圆半径
+        .range([0, radius]);
 
     const angleScale = d3.scaleBand()
         .domain(pieData.map(d => d.activity))
@@ -1006,12 +1009,12 @@ function drawActivityPie() {
         .align(0);
 
     const arc = d3.arc()
-        .innerRadius(20)
+        .innerRadius(0)
         .outerRadius(d => radiusScale(d.value))
         .startAngle(d => angleScale(d.activity))
         .endAngle(d => angleScale(d.activity) + angleScale.bandwidth())
         .padAngle(0.05)
-        .padRadius(20)
+        .padRadius(0)
         .cornerRadius(4);
 
     // 绘制花瓣
@@ -1164,6 +1167,68 @@ function drawHourlyTrend() {
         .style("stroke-width", 2.5)
         .style("stroke-dasharray", "5,5");
 
+    // 添加交互点
+    const allPoints = [
+        ...weekdayData.map(d => ({...d, type: 'weekday', color: COLORS.primary})),
+        ...weekendData.map(d => ({...d, type: 'weekend', color: COLORS.pink}))
+    ];
+
+    svg.selectAll(".trend-point")
+        .data(allPoints)
+        .enter()
+        .append("circle")
+        .attr("class", "trend-point")
+        .attr("cx", d => x(d.hour > 3 ? d.hour : d.hour + 24))
+        .attr("cy", d => y(d.peopleCount))
+        .attr("r", 4)
+        .style("fill", d => d.color)
+        .style("stroke", "#fff")
+        .style("stroke-width", 1)
+        .style("cursor", "pointer")
+        .on("mouseover", function(event, d) {
+            // 放大当前点
+            d3.select(this)
+                .transition().duration(200)
+                .attr("r", 8)
+                .style("stroke-width", 3);
+
+            // 显示 Tooltip
+            showTooltip(event, `
+                <div class="tooltip-title">${d.hour}:00 (${d.type === 'weekday' ? '工作日' : '周末'})</div>
+                <div class="tooltip-row">
+                    <span>在线人数:</span>
+                    <span>${d.peopleCount}</span>
+                </div>
+            `);
+
+            // 联动热力图：高亮对应时间的方块
+            const heatmapRects = d3.select("#heatmap-chart").selectAll(`rect[data-hour='${d.hour}']`);
+            
+            heatmapRects
+                .transition().duration(200)
+                .style("stroke", "#fff")
+                .style("stroke-width", 2)
+                .style("filter", "brightness(1.3)");
+        })
+        .on("mouseout", function(event, d) {
+            // 恢复当前点
+            d3.select(this)
+                .transition().duration(200)
+                .attr("r", 4)
+                .style("stroke-width", 1);
+
+            hideTooltip();
+
+            // 恢复热力图
+            const heatmapRects = d3.select("#heatmap-chart").selectAll(`rect[data-hour='${d.hour}']`);
+            
+            heatmapRects
+                .transition().duration(200)
+                .style("stroke", "#0a0e1a")
+                .style("stroke-width", 1)
+                .style("filter", "none");
+        });
+
     // 图例
     const legend = svg.append("g").attr("transform", `translate(${width - 100}, 10)`);
     
@@ -1256,9 +1321,9 @@ window.addEventListener('resize', () => {
             drawHoursSleep();
             drawAddiction();
         } else if (activePage === "page-global") {
+            drawWorldMap();
             drawGlobalRanking();
             drawRegionChart();
-            drawGlobalBubble();
         }
     }, 300);
 });
@@ -1815,9 +1880,10 @@ function drawAddiction() {
 
 // ===== 第四页：全球对比 =====
 function initGlobalPage() {
+    drawWorldMap();
     drawGlobalRanking();
     drawRegionChart();
-    drawGlobalBubble();
+    // drawGlobalBubble(); // 已注释，不再使用
     
     // 绑定排序按钮
     d3.select("#sortAsc").on("click", function() {
@@ -1831,6 +1897,206 @@ function initGlobalPage() {
         d3.select(this).classed("active", true);
         drawGlobalRanking(false);
     });
+}
+
+// 全球熬夜率地图
+function drawWorldMap() {
+    const container = d3.select("#global-map-chart");
+    if (container.empty()) return;
+
+    container.selectAll("*").remove();
+
+    const containerWidth = container.node().getBoundingClientRect().width;
+    const containerHeight = container.node().getBoundingClientRect().height;
+    const margin = { top: 6, right: 6, bottom: 6, left: 6 };
+    const width = containerWidth - margin.left - margin.right;
+    const height = containerHeight - margin.top - margin.bottom;
+
+    const svg = container.append("svg")
+        .attr("width", containerWidth)
+        .attr("height", containerHeight)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const normalizeName = name => (name || "").toLowerCase().replace(/[^a-z]/g, "");
+    const NAME_ALIASES = {
+        "unitedstatesofamerica": "unitedstates",
+        "unitedstates": "unitedstates",
+        "republicofkorea": "southkorea",
+        "korearepublicof": "southkorea",
+        "viet nam": "vietnam"
+    };
+
+    const dataMap = new Map(globalData.map(d => [normalizeName(d.country), d]));
+    const lateNightExtent = d3.extent(globalData, d => d.lateNightRate);
+    const colorScale = d3.scaleLinear()
+        .domain(lateNightExtent)
+        .range([COLORS.success, COLORS.danger])
+        .clamp(true);
+
+    const renderMap = (geojson) => {
+        const radius = Math.min(width, height) / 2;
+        const projection = d3.geoOrthographic()
+            .translate([width / 2, height / 2])
+            .scale(radius - 4)
+            .rotate(worldRotation);
+
+        const path = d3.geoPath(projection);
+        const graticule = d3.geoGraticule();
+        const sphere = { type: "Sphere" };
+
+        const ocean = svg.append("path")
+            .datum(sphere)
+            .attr("fill", "#0f172a")
+            .attr("stroke", COLORS.secondary)
+            .attr("stroke-opacity", 0.25);
+
+        const graticulePath = svg.append("path")
+            .datum(graticule())
+            .attr("fill", "none")
+            .attr("stroke", "rgba(255,255,255,0.08)")
+            .attr("stroke-width", 0.6);
+
+        const countries = svg.append("g")
+            .attr("cursor", "grab")
+            .selectAll("path")
+            .data(geojson.features)
+            .join("path")
+            .attr("fill", d => {
+                const key = normalizeName(d.properties?.name);
+                const alias = NAME_ALIASES[key];
+                const data = dataMap.get(key) || dataMap.get(alias);
+                return data ? colorScale(data.lateNightRate) : "#1f2937";
+            })
+            .attr("stroke", "#0a0e1a")
+            .attr("stroke-width", 0.7)
+            .on("mouseover", (event, d) => {
+                const key = normalizeName(d.properties?.name);
+                const alias = NAME_ALIASES[key];
+                const data = dataMap.get(key) || dataMap.get(alias);
+                const hasData = Boolean(data);
+
+                d3.select(event.currentTarget)
+                    .attr("stroke", COLORS.primary)
+                    .attr("stroke-width", 1.6)
+                    .raise();
+
+                showTooltip(event, `
+                    <div class="tooltip-title">${d.properties?.name || "未知国家"}</div>
+                    <div class="tooltip-row">
+                        <span>熬夜率:</span>
+                        <span>${hasData ? `${data.lateNightRate}%` : "暂无数据"}</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span>平均睡眠:</span>
+                        <span>${hasData ? `${data.avgSleep} 小时` : "暂无数据"}</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span>周工作时长:</span>
+                        <span>${hasData ? `${data.workHours} 小时` : "暂无数据"}</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span>网络使用:</span>
+                        <span>${hasData ? `${data.internetHours} 小时/天` : "暂无数据"}</span>
+                    </div>
+                    ${hasData ? `<div class="tooltip-row">
+                        <span>压力水平:</span>
+                        <span>${data.stressLevel}/10</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span>睡眠障碍率:</span>
+                        <span>${data.disorderRate}%</span>
+                    </div>` : ""}
+                `);
+            })
+            .on("mouseout", (event) => {
+                hideTooltip();
+                d3.select(event.currentTarget)
+                    .attr("stroke", "#0a0e1a")
+                    .attr("stroke-width", 0.7);
+            });
+
+        const redraw = () => {
+            ocean.attr("d", path);
+            graticulePath.attr("d", path);
+            countries.attr("d", path);
+        };
+
+        redraw();
+
+        const drag = d3.drag()
+            .on("start", () => countries.attr("cursor", "grabbing"))
+            .on("drag", (event) => {
+                const sensitivity = 0.4;
+                worldRotation[0] += event.dx * sensitivity;
+                worldRotation[1] -= event.dy * sensitivity;
+                worldRotation[1] = Math.max(-90, Math.min(90, worldRotation[1]));
+                projection.rotate(worldRotation);
+                redraw();
+            })
+            .on("end", () => countries.attr("cursor", "grab"));
+
+        svg.call(drag);
+
+        // 图例渲染到HTML容器
+        const legendContainer = d3.select("#globe-legend");
+        legendContainer.html("");
+        
+        const svgLegend = legendContainer.append("svg")
+            .attr("width", 180)
+            .attr("height", 24);
+        
+        const defsLegend = svgLegend.append("defs");
+        const gradientLegend = defsLegend.append("linearGradient")
+            .attr("id", "map-gradient-legend")
+            .attr("x1", "0%")
+            .attr("x2", "100%");
+        
+        gradientLegend.append("stop").attr("offset", "0%").attr("stop-color", COLORS.success);
+        gradientLegend.append("stop").attr("offset", "100%").attr("stop-color", COLORS.danger);
+        
+        svgLegend.append("rect")
+            .attr("x", 20)
+            .attr("y", 4)
+            .attr("width", 120)
+            .attr("height", 10)
+            .attr("fill", "url(#map-gradient-legend)")
+            .attr("stroke", COLORS.primary)
+            .attr("stroke-width", 1);
+        
+        svgLegend.append("text")
+            .attr("x", 18)
+            .attr("y", 20)
+            .style("fill", COLORS.text)
+            .style("font-size", "11px")
+            .style("text-anchor", "end")
+            .text("低");
+        
+        svgLegend.append("text")
+            .attr("x", 142)
+            .attr("y", 20)
+            .style("fill", COLORS.text)
+            .style("font-size", "11px")
+            .style("text-anchor", "start")
+            .text("高");
+    };
+
+    if (worldGeoData) {
+        renderMap(worldGeoData);
+    } else {
+        d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json")
+            .then(world => {
+                worldGeoData = topojson.feature(world, world.objects.countries);
+                renderMap(worldGeoData);
+            })
+            .catch(err => {
+                console.error("世界地图加载失败", err);
+                container.append("div")
+                    .style("color", COLORS.text)
+                    .style("padding", "10px")
+                    .text("世界地图加载失败，请检查网络连接。");
+            });
+    }
 }
 
 // 全球睡眠时长排名
@@ -1861,7 +2127,7 @@ function drawGlobalRanking(ascending = true) {
     const y = d3.scaleBand()
         .domain(sortedData.map(d => d.country))
         .range([0, height])
-        .padding(0.2);
+        .padding(0.08);
 
     const colorScale = d3.scaleSequential()
         .domain([6, 8])
@@ -1921,29 +2187,85 @@ function drawGlobalRanking(ascending = true) {
         .style("font-size", "10px")
         .style("font-weight", "600")
         .text(d => d.avgSleep + "h");
+
+    // 渐变图例（睡眠时长）- 渲染到HTML容器
+    const legendContainer = d3.select("#ranking-legend");
+    legendContainer.html("");
+    
+    const svgLegend = legendContainer.append("svg")
+        .attr("width", 160)
+        .attr("height", 24);
+    
+    const defsLegend = svgLegend.append("defs");
+    const gradientLegend = defsLegend.append("linearGradient")
+        .attr("id", "ranking-gradient-legend")
+        .attr("x1", "0%")
+        .attr("x2", "100%");
+    
+    gradientLegend.append("stop").attr("offset", "0%").attr("stop-color", COLORS.danger);
+    gradientLegend.append("stop").attr("offset", "100%").attr("stop-color", COLORS.success);
+    
+    svgLegend.append("rect")
+        .attr("x", 20)
+        .attr("y", 4)
+        .attr("width", 100)
+        .attr("height", 10)
+        .attr("fill", "url(#ranking-gradient-legend)")
+        .attr("stroke", COLORS.primary)
+        .attr("stroke-width", 1)
+        .attr("rx", 2);
+    
+    svgLegend.append("text")
+        .attr("x", 18)
+        .attr("y", 20)
+        .style("fill", COLORS.text)
+        .style("font-size", "10px")
+        .style("text-anchor", "end")
+        .text("较短");
+    
+    svgLegend.append("text")
+        .attr("x", 122)
+        .attr("y", 20)
+        .style("fill", COLORS.text)
+        .style("font-size", "10px")
+        .style("text-anchor", "start")
+        .text("较长");
 }
 
 // 地区熬夜率对比
+// 树状热力图 (Treemap) - 各地区及国家熬夜率分层展示（优化版）
 function drawRegionChart() {
     const container = d3.select("#region-chart");
     container.selectAll("*").remove();
 
-    // 按地区统计
-    const regions = Array.from(new Set(globalData.map(d => d.region)));
-    const regionData = regions.map(region => {
-        const regionCountries = globalData.filter(d => d.region === region);
-        return {
-            region,
-            avgLateNight: d3.mean(regionCountries, d => d.lateNightRate),
-            avgSleep: d3.mean(regionCountries, d => d.avgSleep)
-        };
-    }).sort((a, b) => b.avgLateNight - a.avgLateNight);
-
     const containerWidth = container.node().getBoundingClientRect().width;
     const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 30, bottom: 50, left: 60};
+    const margin = {top: 60, right: 15, bottom: 15, left: 15};
     const width = containerWidth - margin.left - margin.right;
     const height = containerHeight - margin.top - margin.bottom;
+
+    // 构建层级数据结构
+    const hierarchyData = {
+        name: "全球",
+        children: []
+    };
+
+    const regions = Array.from(new Set(globalData.map(d => d.region)));
+    regions.forEach(region => {
+        const regionCountries = globalData.filter(d => d.region === region);
+        hierarchyData.children.push({
+            name: region,
+            children: regionCountries.map(d => ({
+                name: d.country,
+                value: d.lateNightRate,
+                sleep: d.avgSleep,
+                stress: d.stressLevel,
+                disorder: d.disorderRate,
+                workHours: d.workHours,
+                internetHours: d.internetHours
+            }))
+        });
+    });
 
     const svg = container.append("svg")
         .attr("width", containerWidth)
@@ -1951,82 +2273,288 @@ function drawRegionChart() {
         .append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    const x = d3.scaleBand()
-        .domain(regionData.map(d => d.region))
-        .range([0, width])
-        .padding(0.3);
+    // 创建层级结构
+    const root = d3.hierarchy(hierarchyData)
+        .sum(d => d.value)
+        .sort((a, b) => b.value - a.value);
 
-    const y = d3.scaleLinear()
-        .domain([0, 100])
-        .range([height, 0]);
+    // 创建treemap布局
+    d3.treemap()
+        .size([width, height])
+        .paddingTop(28)
+        .paddingInner(3)
+        .paddingOuter(4)
+        .round(true)
+        (root);
 
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis")
-        .selectAll("text")
-        .attr("transform", "rotate(-15)")
-        .style("text-anchor", "end")
-        .style("font-size", "10px");
+    // 颜色比例尺 - 根据熬夜率着色，使用更丰富的渐变
+    const colorScale = d3.scaleSequential()
+        .domain([25, 75])
+        .interpolator(d3.interpolateRgb("#10b981", "#ef4444"));
 
-    svg.append("g")
-        .call(d3.axisLeft(y).tickFormat(d => d + "%"))
-        .attr("class", "axis");
+    // 地区颜色 - 顶部标签
+    const regionColors = {
+        "Asia": COLORS.danger,
+        "Europe": COLORS.primary,
+        "North America": COLORS.tertiary,
+        "South America": COLORS.secondary,
+        "Oceania": COLORS.success
+    };
 
-    svg.append("text")
-        .attr("x", width / 2)
-        .attr("y", height + 45)
-        .attr("fill", COLORS.text)
-        .style("text-anchor", "middle")
-        .style("font-size", "11px")
-        .text("地区");
+    // 添加滤镜和阴影效果
+    const defs = svg.append("defs");
+    
+    // 发光滤镜
+    const filter = defs.append("filter")
+        .attr("id", "glow");
+    filter.append("feGaussianBlur")
+        .attr("stdDeviation", "3")
+        .attr("result", "coloredBlur");
+    const feMerge = filter.append("feMerge");
+    feMerge.append("feMergeNode").attr("in", "coloredBlur");
+    feMerge.append("feMergeNode").attr("in", "SourceGraphic");
 
-    const colorScale = d3.scaleOrdinal()
-        .domain(regions)
-        .range([COLORS.danger, COLORS.tertiary, COLORS.secondary, COLORS.primary, COLORS.success]);
+    // 渐变图例
+    const gradient = defs.append("linearGradient")
+        .attr("id", "treemap-gradient")
+        .attr("x1", "0%")
+        .attr("x2", "100%");
 
-    svg.selectAll(".bar")
-        .data(regionData)
-        .join("rect")
-        .attr("x", d => x(d.region))
-        .attr("y", d => y(d.avgLateNight))
-        .attr("width", x.bandwidth())
-        .attr("height", d => height - y(d.avgLateNight))
-        .attr("fill", d => colorScale(d.region))
-        .attr("rx", 5)
+    gradient.append("stop")
+        .attr("offset", "0%")
+        .attr("stop-color", "#10b981");
+
+    gradient.append("stop")
+        .attr("offset", "33%")
+        .attr("stop-color", "#22c55e");
+
+    gradient.append("stop")
+        .attr("offset", "50%")
+        .attr("stop-color", "#f59e0b");
+
+    gradient.append("stop")
+        .attr("offset", "75%")
+        .attr("stop-color", "#f97316");
+
+    gradient.append("stop")
+        .attr("offset", "100%")
+        .attr("stop-color", "#ef4444");
+
+    // 绘制节点组
+    const nodes = svg.selectAll(".country-node")
+        .data(root.leaves())
+        .join("g")
+        .attr("class", "country-node")
+        .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+    // 绘制矩形
+    nodes.append("rect")
+        .attr("width", d => d.x1 - d.x0)
+        .attr("height", d => d.y1 - d.y0)
+        .attr("fill", d => colorScale(d.data.value))
+        .attr("stroke", "#0a0e1a")
+        .attr("stroke-width", 2.5)
+        .attr("rx", 4)
+        .style("opacity", 0.85)
+        .style("transition", "all 0.3s ease")
         .on("mouseover", function(event, d) {
+            d3.select(this)
+                .transition()
+                .duration(200)
+                .style("opacity", 1)
+                .attr("stroke", COLORS.primary)
+                .attr("stroke-width", 4)
+                .style("filter", "url(#glow)");
+
+            // 高亮该国家所在的地区标签
+            d3.selectAll(".region-label")
+                .filter(r => r.data.name === d.parent.data.name)
+                .selectAll("text")
+                .transition()
+                .duration(200)
+                .style("font-size", "15px");
+
             showTooltip(event, `
-                <div class="tooltip-title">${d.region}</div>
+                <div class="tooltip-title">${d.data.name}</div>
                 <div class="tooltip-row">
-                    <span>平均熬夜率:</span>
-                    <span>${d.avgLateNight.toFixed(1)}%</span>
+                    <span>所属地区:</span>
+                    <span>${d.parent.data.name}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span>熬夜率:</span>
+                    <span style="color: ${colorScale(d.data.value)}; font-weight: bold;">${d.data.value.toFixed(1)}%</span>
                 </div>
                 <div class="tooltip-row">
                     <span>平均睡眠:</span>
-                    <span>${d.avgSleep.toFixed(1)}小时</span>
+                    <span>${d.data.sleep.toFixed(1)}小时</span>
+                </div>
+                <div class="tooltip-row">
+                    <span>压力等级:</span>
+                    <span>${d.data.stress.toFixed(1)}/10</span>
+                </div>
+                <div class="tooltip-row">
+                    <span>工作时长:</span>
+                    <span>${d.data.workHours}小时/周</span>
+                </div>
+                <div class="tooltip-row">
+                    <span>互联网使用:</span>
+                    <span>${d.data.internetHours.toFixed(1)}小时/天</span>
+                </div>
+                <div class="tooltip-row">
+                    <span>睡眠障碍率:</span>
+                    <span>${d.data.disorder.toFixed(1)}%</span>
                 </div>
             `);
-            d3.select(this).attr("opacity", 0.8);
         })
-        .on("mouseout", function() {
+        .on("mouseout", function(event, d) {
+            d3.select(this)
+                .transition()
+                .duration(200)
+                .style("opacity", 0.85)
+                .attr("stroke", "#0a0e1a")
+                .attr("stroke-width", 2.5)
+                .style("filter", "none");
+
+            d3.selectAll(".region-label")
+                .filter(r => r.data.name === d.parent.data.name)
+                .selectAll("text")
+                .transition()
+                .duration(200)
+                .style("font-size", "13px");
+
             hideTooltip();
-            d3.select(this).attr("opacity", 1);
         });
 
-    // 数值标签
-    svg.selectAll(".label")
-        .data(regionData)
-        .join("text")
-        .attr("x", d => x(d.region) + x.bandwidth() / 2)
-        .attr("y", d => y(d.avgLateNight) - 5)
-        .attr("text-anchor", "middle")
+    // 添加国家名称
+    nodes.append("text")
+        .attr("x", d => (d.x1 - d.x0) / 2)
+        .attr("y", d => (d.y1 - d.y0) / 2 - 6)
+        .style("fill", COLORS.bg)
+        .style("font-size", d => {
+            const width = d.x1 - d.x0;
+            const height = d.y1 - d.y0;
+            return Math.min(width / 5, height / 3, 14) + "px";
+        })
+        .style("font-weight", "bold")
+        .style("text-anchor", "middle")
+        .style("pointer-events", "none")
+        .style("text-shadow", "1px 1px 2px rgba(0,0,0,0.5)")
+        .text(d => {
+            const width = d.x1 - d.x0;
+            const name = d.data.name;
+            // 过窄时显示三字简写，保证国家可见
+            if (width < 26) return "";
+            if (width < 60) return name.substring(0, 3);
+            if (name.length > 15) return name.substring(0, 12) + "...";
+            return name;
+        });
+
+    // 添加熬夜率数值
+    nodes.append("text")
+        .attr("x", d => (d.x1 - d.x0) / 2)
+        .attr("y", d => (d.y1 - d.y0) / 2 + 10)
+        .style("fill", COLORS.text)
+        .style("font-size", d => {
+            const width = d.x1 - d.x0;
+            const height = d.y1 - d.y0;
+            return Math.min(width / 6, height / 4, 13) + "px";
+        })
+        .style("font-weight", "700")
+        .style("text-anchor", "middle")
+        .style("pointer-events", "none")
+        .style("text-shadow", "1px 1px 3px rgba(0,0,0,0.8)")
+        .text(d => {
+            const width = d.x1 - d.x0;
+            if (width < 35) return "";
+            return d.data.value.toFixed(0) + "%";
+        });
+
+    // 绘制地区标签 - 只在文字后添加小背景，不遮挡国家方框
+    const regionLabels = svg.selectAll(".region-label")
+        .data(root.children)
+        .join("g")
+        .attr("class", "region-label")
+        .attr("transform", d => `translate(${d.x0 + (d.x1 - d.x0) / 2}, ${d.y0 + 13})`);
+
+    // 文字背景（带模糊效果）
+    regionLabels.append("text")
+        .style("fill", COLORS.bg)
+        .style("font-size", "13px")
+        .style("font-weight", "bold")
+        .style("text-anchor", "middle")
+        .style("stroke", COLORS.bg)
+        .style("stroke-width", "6px")
+        .style("stroke-linejoin", "round")
+        .style("paint-order", "stroke")
+        .style("opacity", 0.9)
+        .style("pointer-events", "none")
+        .text(d => d.data.name);
+
+    // 地区名称文字
+    regionLabels.append("text")
+        .style("fill", d => regionColors[d.data.name] || COLORS.secondary)
+        .style("font-size", "13px")
+        .style("font-weight", "bold")
+        .style("text-anchor", "middle")
+        .style("pointer-events", "none")
+        .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.5))")
+        .text(d => d.data.name);
+
+    // 添加颜色图例
+    const legendWidth = 250;
+    const legendHeight = 14;
+    const legendX = width - legendWidth - 15;
+    const legendY = -45;
+
+    svg.append("text")
+        .attr("x", legendX + legendWidth / 2)
+        .attr("y", legendY)
+        .style("fill", COLORS.text)
+        .style("font-size", "12px")
+        .style("font-weight", "600")
+        .style("text-anchor", "middle")
+        .text("熬夜率热力分布");
+
+    svg.append("rect")
+        .attr("x", legendX)
+        .attr("y", legendY + 6)
+        .attr("width", legendWidth)
+        .attr("height", legendHeight)
+        .style("fill", "url(#treemap-gradient)")
+        .attr("stroke", COLORS.primary)
+        .attr("stroke-width", 1.5)
+        .attr("rx", 3);
+
+    svg.append("text")
+        .attr("x", legendX - 5)
+        .attr("y", legendY + 16)
         .style("fill", COLORS.text)
         .style("font-size", "11px")
-        .style("font-weight", "600")
-        .text(d => d.avgLateNight.toFixed(0) + "%");
+        .style("text-anchor", "end")
+        .text("25%");
+
+    svg.append("text")
+        .attr("x", legendX + legendWidth + 5)
+        .attr("y", legendY + 16)
+        .style("fill", COLORS.text)
+        .style("font-size", "11px")
+        .text("75%");
+
+    // 添加统计信息
+    const totalCountries = root.leaves().length;
+    const avgLateNight = d3.mean(root.leaves(), d => d.data.value);
+    
+    svg.append("text")
+        .attr("x", 10)
+        .attr("y", -45)
+        .style("fill", COLORS.text)
+        .style("font-size", "11px")
+        .style("opacity", 0.8)
+        .text(`共 ${totalCountries} 个国家 | 平均熬夜率: ${avgLateNight.toFixed(1)}%`);
 }
 
-// 全球气泡图
+// 全球气泡图 - 已注释，不再使用
+/*
 function drawGlobalBubble() {
     const container = d3.select("#global-bubble-chart");
     container.selectAll("*").remove();
@@ -2160,3 +2688,4 @@ function drawGlobalBubble() {
         item.append("span").text(region);
     });
 }
+*/
