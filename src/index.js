@@ -1317,7 +1317,6 @@ window.addEventListener('resize', () => {
         } else if (activePage === "page-health") {
             const activeAge = d3.select('#ageGroupFilter').node()?.value || "all";
             drawSocialImpact(activeAge);
-            drawAgeUsage();
             drawHoursSleep();
             drawAddiction();
         } else if (activePage === "page-global") {
@@ -1331,7 +1330,6 @@ window.addEventListener('resize', () => {
 // ===== 第三页：健康影响分析 =====
 function initHealthPage() {
     drawSocialImpact("all");
-    drawAgeUsage();
     drawHoursSleep();
     drawAddiction();
     
@@ -1510,121 +1508,6 @@ function drawSocialImpact(ageGroup) {
         .text("睡眠质量")
         .style("fill", COLORS.text)
         .style("font-size", "11px");
-}
-
-// 各年龄段深夜使用率
-function drawAgeUsage() {
-    const container = d3.select("#age-usage-chart");
-    container.selectAll("*").remove();
-
-    // 按年龄组统计平均深夜使用率
-    const ageGroups = Array.from(new Set(socialData.map(d => d.ageGroup)));
-    const ageData = ageGroups.map(age => ({
-        ageGroup: age,
-        avgUsage: d3.mean(socialData.filter(d => d.ageGroup === age), d => d.lateNightUsage)
-    })).sort((a, b) => {
-        const order = {"18-24": 1, "25-34": 2, "35-44": 3, "45+": 4};
-        return order[a.ageGroup] - order[b.ageGroup];
-    });
-
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 30, bottom: 40, left: 60};
-    const width = containerWidth - margin.left - margin.right;
-    const height = containerHeight - margin.top - margin.bottom;
-
-    const svg = container.append("svg")
-        .attr("width", containerWidth)
-        .attr("height", containerHeight)
-        .append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    const x = d3.scaleBand()
-        .domain(ageData.map(d => d.ageGroup))
-        .range([0, width])
-        .padding(0.4);
-
-    const y = d3.scaleLinear()
-        .domain([0, 100])
-        .range([height, 0]);
-
-    const colorScale = d3.scaleOrdinal()
-        .domain(["18-24", "25-34", "35-44", "45+"])
-        .range([COLORS.danger, COLORS.tertiary, COLORS.secondary, COLORS.success]);
-
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis");
-
-    svg.append("g")
-        .call(d3.axisLeft(y).tickFormat(d => d + "%"))
-        .attr("class", "axis");
-
-    svg.append("text")
-        .attr("x", width / 2)
-        .attr("y", height + 35)
-        .attr("fill", COLORS.text)
-        .style("text-anchor", "middle")
-        .style("font-size", "11px")
-        .text("年龄段");
-
-    svg.selectAll(".bar")
-        .data(ageData)
-        .join("rect")
-        .attr("x", d => x(d.ageGroup))
-        .attr("y", d => y(d.avgUsage))
-        .attr("width", x.bandwidth())
-        .attr("height", d => height - y(d.avgUsage))
-        .attr("fill", d => colorScale(d.ageGroup))
-        .attr("rx", 5)
-        .on("mouseover", function(event, d) {
-            showTooltip(event, `
-                <div class="tooltip-title">${d.ageGroup}</div>
-                <div class="tooltip-row">
-                    <span>平均深夜使用率:</span>
-                    <span>${d.avgUsage.toFixed(1)}%</span>
-                </div>
-            `);
-            d3.select(this).attr("opacity", 0.8);
-        })
-        .on("mouseout", function() {
-            hideTooltip();
-            d3.select(this).attr("opacity", 1);
-        });
-
-    // 添加数值标签
-    svg.selectAll(".label")
-        .data(ageData)
-        .join("text")
-        .attr("x", d => x(d.ageGroup) + x.bandwidth() / 2)
-        .attr("y", d => y(d.avgUsage) - 5)
-        .attr("text-anchor", "middle")
-        .style("fill", COLORS.text)
-        .style("font-size", "12px")
-        .style("font-weight", "600")
-        .text(d => d.avgUsage.toFixed(0) + "%");
-
-    // 图例
-    const legend = svg.append("g").attr("transform", `translate(${width - 100}, 10)`);
-    const legendAgeGroups = ["18-24", "25-34", "35-44", "45+"];
-    
-    legendAgeGroups.forEach((age, i) => {
-        const g = legend.append("g").attr("transform", `translate(0,${i * 20})`);
-        g.append("circle")
-            .attr("cx", 6)
-            .attr("cy", 6)
-            .attr("r", 5)
-            .style("fill", colorScale(age))
-            .style("stroke", "#fff")
-            .style("stroke-width", 1);
-        g.append("text")
-            .attr("x", 15)
-            .attr("y", 10)
-            .text(age)
-            .style("fill", COLORS.text)
-            .style("font-size", "10px");
-    });
 }
 
 // 使用时长与睡眠质量关系
@@ -1933,6 +1816,10 @@ function drawWorldMap() {
         .domain(lateNightExtent)
         .range([COLORS.success, COLORS.danger])
         .clamp(true);
+    const heightScale = d3.scaleLinear()
+        .domain(lateNightExtent)
+        .range([1.5, 14])
+        .clamp(true);
 
     const renderMap = (geojson) => {
         const radius = Math.min(width, height) / 2;
@@ -1944,6 +1831,11 @@ function drawWorldMap() {
         const path = d3.geoPath(projection);
         const graticule = d3.geoGraticule();
         const sphere = { type: "Sphere" };
+        const getCountryStats = (feature) => {
+            const key = normalizeName(feature.properties?.name);
+            const alias = NAME_ALIASES[key];
+            return dataMap.get(key) || dataMap.get(alias);
+        };
 
         const ocean = svg.append("path")
             .datum(sphere)
@@ -1957,23 +1849,46 @@ function drawWorldMap() {
             .attr("stroke", "rgba(255,255,255,0.08)")
             .attr("stroke-width", 0.6);
 
-        const countries = svg.append("g")
+        // 真实凸起效果：为每个国家叠加多层偏移路径，层数与熬夜率成正比
+        const countryGroups = svg.append("g")
             .attr("cursor", "grab")
-            .selectAll("path")
+            .selectAll("g.country")
             .data(geojson.features)
+            .join("g")
+            .attr("class", "country");
+
+        countryGroups.append("g")
+            .attr("class", "extrusion-layers")
+            .selectAll("path")
+            .data(d => {
+                const data = getCountryStats(d);
+                if (!data) return [];
+                const h = heightScale(data.lateNightRate);
+                const layers = Math.max(2, Math.round(h));
+                return d3.range(layers).map(layer => ({ feature: d, layer, h, data }));
+            })
             .join("path")
+            .attr("class", "extrusion-layer")
+            .attr("d", d => path(d.feature))
+            .attr("transform", d => `translate(${d.layer * 0.55},${-d.layer * 0.65})`)
             .attr("fill", d => {
-                const key = normalizeName(d.properties?.name);
-                const alias = NAME_ALIASES[key];
-                const data = dataMap.get(key) || dataMap.get(alias);
+                const base = d3.color(colorScale(d.data.lateNightRate)) || d3.color("#1f2937");
+                return base.darker(0.9 + d.layer * 0.08);
+            })
+            .attr("opacity", 0.9)
+            .attr("stroke", "none");
+
+        const countries = countryGroups.append("path")
+            .attr("class", "country-top")
+            .attr("d", d => path(d))
+            .attr("fill", d => {
+                const data = getCountryStats(d);
                 return data ? colorScale(data.lateNightRate) : "#1f2937";
             })
             .attr("stroke", "#0a0e1a")
             .attr("stroke-width", 0.7)
             .on("mouseover", (event, d) => {
-                const key = normalizeName(d.properties?.name);
-                const alias = NAME_ALIASES[key];
-                const data = dataMap.get(key) || dataMap.get(alias);
+                const data = getCountryStats(d);
                 const hasData = Boolean(data);
 
                 d3.select(event.currentTarget)
@@ -2019,7 +1934,8 @@ function drawWorldMap() {
         const redraw = () => {
             ocean.attr("d", path);
             graticulePath.attr("d", path);
-            countries.attr("d", path);
+            countryGroups.selectAll(".extrusion-layer").attr("d", d => path(d.feature));
+            countries.attr("d", d => path(d));
         };
 
         redraw();
