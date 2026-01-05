@@ -403,102 +403,231 @@ function drawRadar(userData) {
     }
 }
 
-// 堆叠条形图
+// 桑基图 - BMI与睡眠障碍关系
 function drawStackedBar() {
     const container = d3.select("#stacked-bar-chart");
     container.selectAll("*").remove();
 
     const containerWidth = container.node().getBoundingClientRect().width;
     const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 100, bottom: 40, left: 60};
+    const margin = {top: 20, right: 60, bottom: 20, left: 15};
     const width = containerWidth - margin.left - margin.right;
     const height = containerHeight - margin.top - margin.bottom;
 
     const svg = container.append("svg")
         .attr("width", containerWidth)
         .attr("height", containerHeight)
+        .style("overflow", "visible")
         .append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    const groups = ["正常", "超重", "肥胖"];
-    const subgroups = ["无睡眠障碍", "睡眠呼吸暂停", "失眠"];
-
-    let preparedData = [];
-    groups.forEach(g => {
-        let obj = { group: g };
-        subgroups.forEach(sub => {
-            obj[sub] = filteredHealthData.filter(d => d.bmi === g && d.disorder === sub).length;
+    // 准备桑基图数据
+    const bmiCategories = ["正常", "超重", "肥胖"];
+    const disorders = ["无睡眠障碍", "睡眠呼吸暂停", "失眠"];
+    
+    // 创建节点和链接
+    const nodes = [];
+    const links = [];
+    
+    // 添加BMI节点
+    bmiCategories.forEach((bmi, i) => {
+        nodes.push({ name: bmi, category: "bmi" });
+    });
+    
+    // 添加睡眠障碍节点
+    disorders.forEach((disorder, i) => {
+        nodes.push({ name: disorder, category: "disorder" });
+    });
+    
+    // 创建链接数据
+    bmiCategories.forEach((bmi, i) => {
+        disorders.forEach((disorder, j) => {
+            const count = filteredHealthData.filter(d => d.bmi === bmi && d.disorder === disorder).length;
+            if (count > 0) {
+                links.push({
+                    source: i,
+                    target: bmiCategories.length + j,
+                    value: count
+                });
+            }
         });
-        preparedData.push(obj);
     });
 
-    const stackedData = d3.stack().keys(subgroups)(preparedData);
+    // 计算每个BMI节点的总人数和每个睡眠节点的总人数，用于分配最大可用厚度
+    const sourceTotals = {};
+    const targetTotals = {};
+    links.forEach(link => {
+        sourceTotals[link.source] = (sourceTotals[link.source] || 0) + link.value;
+        targetTotals[link.target] = (targetTotals[link.target] || 0) + link.value;
+    });
 
-    const x = d3.scaleBand()
-        .domain(groups)
-        .range([0, width])
-        .padding(0.3);
+    // 设置节点位置
+    const nodeWidth = 26;
+    const nodePadding = 30;
+    const leftX = 80;
+    const rightX = width - 80;
+    
+    // 计算总人数用于归一化
+    const totalPeople = filteredHealthData.length;
+    
+    // 手动布局节点
+    const bmiNodeHeight = (height - (bmiCategories.length - 1) * nodePadding) / bmiCategories.length;
+    const disorderNodeHeight = (height - (disorders.length - 1) * nodePadding) / disorders.length;
+    
+    nodes.forEach((node, i) => {
+        if (node.category === "bmi") {
+            const index = i;
+            node.x0 = leftX;
+            node.x1 = leftX + nodeWidth;
+            node.y0 = index * (bmiNodeHeight + nodePadding);
+            node.y1 = node.y0 + bmiNodeHeight;
+        } else {
+            const index = i - bmiCategories.length;
+            node.x0 = rightX;
+            node.x1 = rightX + nodeWidth;
+            node.y0 = index * (disorderNodeHeight + nodePadding);
+            node.y1 = node.y0 + disorderNodeHeight;
+        }
+    });
 
-    const y = d3.scaleLinear()
-        .domain([0, d3.max(preparedData, d => d["无睡眠障碍"] + d["睡眠呼吸暂停"] + d["失眠"])])
-        .range([height, 0]);
+    // 颜色映射
+    const bmiColors = {
+        "正常": COLORS.success,
+        "超重": COLORS.tertiary,
+        "肥胖": COLORS.danger
+    };
+    
+    const disorderColors = {
+        "无睡眠障碍": COLORS.primary,
+        "睡眠呼吸暂停": COLORS.secondary,
+        "失眠": COLORS.pink
+    };
 
-    const color = d3.scaleOrdinal()
-        .domain(subgroups)
-        .range([COLORS.success, COLORS.tertiary, COLORS.danger]);
+    // 绘制链接（流）
+    const linkGroup = svg.append("g").attr("class", "links");
+    
+    links.forEach(link => {
+        const sourceNode = nodes[link.source];
+        const targetNode = nodes[link.target];
+        
+        // 为了避免链接厚度超过节点高度，按每个源/目标的总量做归一化
+        const availableHeight = Math.min(sourceNode.y1 - sourceNode.y0, targetNode.y1 - targetNode.y0) * 0.8;
+        const scaleBase = Math.max(sourceTotals[link.source], targetTotals[link.target]);
+        const linkHeight = availableHeight * (link.value / scaleBase);
+        
+        const x0 = sourceNode.x1;
+        const x1 = targetNode.x0;
+        const y0 = sourceNode.y0 + (sourceNode.y1 - sourceNode.y0) / 2;
+        const y1 = targetNode.y0 + (targetNode.y1 - targetNode.y0) / 2;
+        const xi = d3.interpolateNumber(x0, x1);
+        const x2 = xi(0.5);
+        
+        linkGroup.append("path")
+            .attr("d", () => {
+                return `M ${x0} ${y0 - linkHeight/2}
+                        C ${x2} ${y0 - linkHeight/2},
+                          ${x2} ${y1 - linkHeight/2},
+                          ${x1} ${y1 - linkHeight/2}
+                        L ${x1} ${y1 + linkHeight/2}
+                        C ${x2} ${y1 + linkHeight/2},
+                          ${x2} ${y0 + linkHeight/2},
+                          ${x0} ${y0 + linkHeight/2}
+                        Z`;
+            })
+            .style("fill", bmiColors[sourceNode.name])
+            .style("opacity", 0.3)
+            .style("stroke", "none")
+            .on("mouseover", function(event) {
+                d3.select(this)
+                    .style("opacity", 0.6)
+                    .style("stroke", bmiColors[sourceNode.name])
+                    .style("stroke-width", 1);
+                
+                showTooltip(event, `
+                    <div class="tooltip-title">${sourceNode.name} → ${targetNode.name}</div>
+                    <div class="tooltip-row">
+                        <span>人数:</span>
+                        <span>${link.value} 人</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span>占比:</span>
+                        <span>${(link.value / totalPeople * 100).toFixed(1)}%</span>
+                    </div>
+                `);
+            })
+            .on("mouseout", function() {
+                d3.select(this)
+                    .style("opacity", 0.3)
+                    .style("stroke", "none");
+                hideTooltip();
+            });
+    });
 
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis");
-
-    svg.append("g")
-        .call(d3.axisLeft(y))
-        .attr("class", "axis");
-
-    svg.append("g")
-        .selectAll("g")
-        .data(stackedData)
-        .join("g")
-        .attr("fill", d => color(d.key))
-        .selectAll("rect")
-        .data(d => d)
-        .join("rect")
-        .attr("x", d => x(d.data.group))
-        .attr("y", d => y(d[1]))
-        .attr("height", d => y(d[0]) - y(d[1]))
-        .attr("width", x.bandwidth())
-        .on("mouseover", (event, d) => {
-            const subgroupName = d3.select(event.currentTarget.parentNode).datum().key;
-            showTooltip(event, `
-                <div class="tooltip-title">${d.data.group}</div>
-                <div class="tooltip-row">
-                    <span>${subgroupName}:</span>
-                    <span>${d.data[subgroupName]} 人</span>
-                </div>
-            `);
-            d3.select(event.currentTarget).style("opacity", 0.8);
-        })
-        .on("mouseout", (event) => {
-            hideTooltip();
-            d3.select(event.currentTarget).style("opacity", 1);
-        });
-
-    // 图例
-    const legend = svg.append("g").attr("transform", `translate(${width - 90}, 10)`);
-    subgroups.forEach((sub, i) => {
-        const g = legend.append("g").attr("transform", `translate(0,${i * 20})`);
+    // 绘制节点
+    const nodeGroup = svg.append("g").attr("class", "nodes");
+    
+    nodes.forEach(node => {
+        const g = nodeGroup.append("g");
+        
+        // 绘制节点矩形
         g.append("rect")
-            .attr("width", 12)
-            .attr("height", 12)
-            .style("fill", color(sub));
+            .attr("x", node.x0)
+            .attr("y", node.y0)
+            .attr("width", nodeWidth)
+            .attr("height", node.y1 - node.y0)
+            .style("fill", node.category === "bmi" ? bmiColors[node.name] : disorderColors[node.name])
+            .style("stroke", "#fff")
+            .style("stroke-width", 2)
+            .style("rx", 4);
+        
+        // 添加节点标签
+        const labelX = node.category === "bmi" ? node.x0 - 10 : node.x1 + 10;
+        const textAnchor = node.category === "bmi" ? "end" : "start";
+        
         g.append("text")
-            .attr("x", 18)
-            .attr("y", 10)
-            .text(sub)
+            .attr("x", labelX)
+            .attr("y", (node.y0 + node.y1) / 2)
+            .attr("dy", "0.35em")
+            .attr("text-anchor", textAnchor)
             .style("fill", COLORS.text)
-            .style("font-size", "10px");
+            .style("font-size", "12px")
+            .style("font-weight", "600")
+            .text(node.name);
+        
+        // 添加节点数值
+        const count = node.category === "bmi" 
+            ? filteredHealthData.filter(d => d.bmi === node.name).length
+            : filteredHealthData.filter(d => d.disorder === node.name).length;
+        
+        g.append("text")
+            .attr("x", labelX)
+            .attr("y", (node.y0 + node.y1) / 2 + 16)
+            .attr("dy", "0.35em")
+            .attr("text-anchor", textAnchor)
+            .style("fill", COLORS.text)
+            .style("font-size", "10px")
+            .style("opacity", 0.7)
+            .text(`${count}人`);
     });
+
+    // 添加标题
+    svg.append("text")
+        .attr("x", leftX + nodeWidth / 2)
+        .attr("y", -5)
+        .attr("text-anchor", "middle")
+        .style("fill", COLORS.text)
+        .style("font-size", "11px")
+        .style("opacity", 0.8)
+        .text("BMI分类");
+    
+    svg.append("text")
+        .attr("x", rightX + nodeWidth / 2)
+        .attr("y", -5)
+        .attr("text-anchor", "middle")
+        .style("fill", COLORS.text)
+        .style("font-size", "11px")
+        .style("opacity", 0.8)
+        .text("睡眠状况");
 }
 
 // 环形图
@@ -665,7 +794,6 @@ function drawStressSleepChart() {
 // ===== 第二页：熬夜行为分析 =====
 function initBehaviorPage() {
     drawHeatmap("weekday");
-    drawClockChart();
     drawActivityPie();
     drawHourlyTrend();
     
@@ -795,176 +923,6 @@ function drawHeatmap(dayType) {
         .call(legendAxis)
         .attr("class", "axis")
         .style("font-size", "9px");
-}
-
-// 24小时时钟图
-function drawClockChart() {
-    const container = d3.select("#clock-chart");
-    container.selectAll("*").remove();
-
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const radius = Math.min(containerWidth, containerHeight) / 2 - 30;
-
-    const svg = container.append("svg")
-        .attr("width", containerWidth)
-        .attr("height", containerHeight)
-        .append("g")
-        .attr("transform", `translate(${containerWidth/2},${containerHeight/2})`);
-
-    // 提取实际有数据的小时
-    const uniqueHours = [...new Set(behaviorData.map(d => d.hour))].sort((a, b) => a - b);
-    
-    // 计算每小时平均活跃人数（只计算有数据的时段）
-    const activeData = uniqueHours.map(hour => {
-        const records = behaviorData.filter(d => d.hour === hour);
-        const avgPeople = d3.mean(records, d => d.peopleCount);
-        return { hour, people: avgPeople };
-    });
-
-    const angleScale = d3.scaleLinear()
-        .domain([0, 24])
-        .range([0, 2 * Math.PI]);
-
-    const radiusScale = d3.scaleLinear()
-        .domain([0, d3.max(activeData, d => d.people)])
-        .range([0, radius]);
-
-    // 添加渐变定义
-    const gradient = svg.append("defs")
-        .append("radialGradient")
-        .attr("id", "glow-gradient")
-        .attr("cx", "50%")
-        .attr("cy", "50%")
-        .attr("r", "50%");
-    
-    gradient.append("stop")
-        .attr("offset", "0%")
-        .attr("stop-color", COLORS.primary)
-        .attr("stop-opacity", 0.8);
-    
-    gradient.append("stop")
-        .attr("offset", "100%")
-        .attr("stop-color", COLORS.primary)
-        .attr("stop-opacity", 0);
-
-    // 绘制参考圆环（表示不同的活跃度级别）
-    const levels = [0.25, 0.5, 0.75, 1];
-    levels.forEach(level => {
-        svg.append("circle")
-            .attr("r", radius * level)
-            .style("fill", "none")
-            .style("stroke", "rgba(100, 140, 200, 0.3)")
-            .style("stroke-dasharray", "5,5")
-            .style("stroke-width", 1);
-    });
-
-    // 高亮深夜时段背景（22:00 - 3:00的扇形区域）
-    const nightStartAngle = angleScale(22) - Math.PI / 2;
-    const nightEndAngle = angleScale(4) - Math.PI / 2; // 到4点（因为3点后面是4点）
-    
-    const arc = d3.arc()
-        .innerRadius(0)
-        .outerRadius(radius)
-        .startAngle(nightStartAngle)
-        .endAngle(nightEndAngle);
-    
-    svg.append("path")
-        .attr("d", arc)
-        .style("fill", COLORS.danger)
-        .style("fill-opacity", 0.05);
-
-    // 绘制时钟圆圈
-    svg.append("circle")
-        .attr("r", radius)
-        .style("fill", "none")
-        .style("stroke", "rgba(100, 140, 200, 0.3)")
-        .style("stroke-width", 2);
-
-    // 绘制24小时刻度（显示所有小时）
-    d3.range(0, 24).forEach(hour => {
-        const angle = angleScale(hour) - Math.PI / 2;
-        const x1 = radius * 0.9 * Math.cos(angle);
-        const y1 = radius * 0.9 * Math.sin(angle);
-        const x2 = radius * Math.cos(angle);
-        const y2 = radius * Math.sin(angle);
-
-        svg.append("line")
-            .attr("x1", x1)
-            .attr("y1", y1)
-            .attr("x2", x2)
-            .attr("y2", y2)
-            .style("stroke", "rgba(100, 140, 200, 0.3)");
-
-        // 小时标签
-        const labelX = radius * 1.15 * Math.cos(angle);
-        const labelY = radius * 1.15 * Math.sin(angle);
-        
-        svg.append("text")
-            .attr("x", labelX)
-            .attr("y", labelY)
-            .attr("text-anchor", "middle")
-            .attr("dominant-baseline", "middle")
-            .text(hour)
-            .style("font-size", "10px")
-            .style("fill", COLORS.text);
-    });
-
-    // 绘制从中心到数据点的射线
-    activeData.forEach(d => {
-        const angle = angleScale(d.hour) - Math.PI / 2;
-        const r = radiusScale(d.people);
-        const x = r * Math.cos(angle);
-        const y = r * Math.sin(angle);
-
-        svg.append("line")
-            .attr("x1", 0)
-            .attr("y1", 0)
-            .attr("x2", x)
-            .attr("y2", y)
-            .style("stroke", COLORS.primary)
-            .style("stroke-width", 1.5)
-            .style("stroke-opacity", 0.4);
-    });
-
-    // 绘制数据点
-    activeData.forEach(d => {
-        const angle = angleScale(d.hour) - Math.PI / 2;
-        const r = radiusScale(d.people);
-        const x = r * Math.cos(angle);
-        const y = r * Math.sin(angle);
-
-        // 添加发光效果的外圈
-        svg.append("circle")
-            .attr("cx", x)
-            .attr("cy", y)
-            .attr("r", 10)
-            .style("fill", "url(#glow-gradient)")
-            .style("opacity", 0.5);
-
-        // 数据点本身
-        svg.append("circle")
-            .attr("cx", x)
-            .attr("cy", y)
-            .attr("r", 5)
-            .style("fill", COLORS.danger)
-            .style("stroke", "#fff")
-            .style("stroke-width", 2)
-            .on("mouseover", function(event) {
-                d3.select(this).attr("r", 7);
-                showTooltip(event, `
-                    <div class="tooltip-title">${d.hour}:00</div>
-                    <div class="tooltip-row">
-                        <span>平均在线:</span>
-                        <span>${Math.round(d.people)} 人</span>
-                    </div>
-                `);
-            })
-            .on("mouseout", function() {
-                d3.select(this).attr("r", 5);
-                hideTooltip();
-            });
-    });
 }
 
 // 活动类型玫瑰图 (Nightingale Rose Chart)
@@ -1311,32 +1269,76 @@ window.addEventListener('resize', () => {
         } else if (activePage === "page-behavior") {
             const activeType = d3.select('[data-type].active').node()?.dataset.type || "weekday";
             drawHeatmap(activeType);
-            drawClockChart();
             drawActivityPie();
             drawHourlyTrend();
         } else if (activePage === "page-health") {
-            const activeAge = d3.select('#ageGroupFilter').node()?.value || "all";
+            const ageGroups = ["18-24", "25-34", "35-44", "45+", "all"];
+            const sliderValue = d3.select('#ageGroupSlider').node()?.value || 0;
+            const activeAge = ageGroups[sliderValue];
             drawSocialImpact(activeAge);
             drawHoursSleep();
             drawAddiction();
         } else if (activePage === "page-global") {
             drawWorldMap();
             drawGlobalRanking();
-            drawRegionChart();
         }
     }, 300);
 });
 
 // ===== 第三页：健康影响分析 =====
 function initHealthPage() {
-    drawSocialImpact("all");
+    drawSocialImpact("18-24");
     drawHoursSleep();
     drawAddiction();
     
-    // 绑定年龄筛选器
-    d3.select("#ageGroupFilter").on("change", function() {
-        drawSocialImpact(this.value);
+    // 初始化年龄段滑块
+    const ageGroups = [
+        { value: "18-24", label: "18-24岁" },
+        { value: "25-34", label: "25-34岁" },
+        { value: "35-44", label: "35-44岁" },
+        { value: "45+", label: "45岁以上" },
+        { value: "all", label: "所有年龄段" }
+    ];
+    
+    // 创建滑块标记
+    const markersContainer = d3.select("#ageSliderMarkers");
+    markersContainer.selectAll("*").remove(); // 清空之前的标记
+    ageGroups.forEach((group, i) => {
+        markersContainer.append("div")
+            .style("text-align", "center")
+            .style("flex", "1")
+            .style("transition", "all 0.2s")
+            .attr("class", `age-marker age-marker-${i}`)
+            .text(i === 4 ? "全部" : group.label.replace("岁", ""));
     });
+    
+    // 绑定滑块事件
+    const slider = d3.select("#ageGroupSlider");
+    const label = d3.select("#ageSliderLabel");
+    
+    slider.on("input", function() {
+        const index = +this.value;
+        const selectedGroup = ageGroups[index];
+        label.text(selectedGroup.label);
+        
+        // 高亮当前选中的标记
+        d3.selectAll(".age-marker")
+            .style("color", "var(--text-muted)")
+            .style("font-weight", "400")
+            .style("transform", "scale(1)");
+        d3.select(`.age-marker-${index}`)
+            .style("color", "var(--accent)")
+            .style("font-weight", "700")
+            .style("transform", "scale(1.15)");
+        
+        drawSocialImpact(selectedGroup.value);
+    });
+    
+    // 初始化第一个标记为高亮
+    d3.select(".age-marker-0")
+        .style("color", "var(--accent)")
+        .style("font-weight", "700")
+        .style("transform", "scale(1.15)");
 }
 
 // 社交媒体对睡眠的影响
@@ -1765,7 +1767,6 @@ function drawAddiction() {
 function initGlobalPage() {
     drawWorldMap();
     drawGlobalRanking();
-    drawRegionChart();
     // drawGlobalBubble(); // 已注释，不再使用
     
     // 绑定排序按钮
@@ -2149,326 +2150,6 @@ function drawGlobalRanking(ascending = true) {
 }
 
 // 地区熬夜率对比
-// 树状热力图 (Treemap) - 各地区及国家熬夜率分层展示（优化版）
-function drawRegionChart() {
-    const container = d3.select("#region-chart");
-    container.selectAll("*").remove();
-
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 60, right: 15, bottom: 15, left: 15};
-    const width = containerWidth - margin.left - margin.right;
-    const height = containerHeight - margin.top - margin.bottom;
-
-    // 构建层级数据结构
-    const hierarchyData = {
-        name: "全球",
-        children: []
-    };
-
-    const regions = Array.from(new Set(globalData.map(d => d.region)));
-    regions.forEach(region => {
-        const regionCountries = globalData.filter(d => d.region === region);
-        hierarchyData.children.push({
-            name: region,
-            children: regionCountries.map(d => ({
-                name: d.country,
-                value: d.lateNightRate,
-                sleep: d.avgSleep,
-                stress: d.stressLevel,
-                disorder: d.disorderRate,
-                workHours: d.workHours,
-                internetHours: d.internetHours
-            }))
-        });
-    });
-
-    const svg = container.append("svg")
-        .attr("width", containerWidth)
-        .attr("height", containerHeight)
-        .append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    // 创建层级结构
-    const root = d3.hierarchy(hierarchyData)
-        .sum(d => d.value)
-        .sort((a, b) => b.value - a.value);
-
-    // 创建treemap布局
-    d3.treemap()
-        .size([width, height])
-        .paddingTop(28)
-        .paddingInner(3)
-        .paddingOuter(4)
-        .round(true)
-        (root);
-
-    // 颜色比例尺 - 根据熬夜率着色，使用更丰富的渐变
-    const colorScale = d3.scaleSequential()
-        .domain([25, 75])
-        .interpolator(d3.interpolateRgb("#10b981", "#ef4444"));
-
-    // 地区颜色 - 顶部标签
-    const regionColors = {
-        "Asia": COLORS.danger,
-        "Europe": COLORS.primary,
-        "North America": COLORS.tertiary,
-        "South America": COLORS.secondary,
-        "Oceania": COLORS.success
-    };
-
-    // 添加滤镜和阴影效果
-    const defs = svg.append("defs");
-    
-    // 发光滤镜
-    const filter = defs.append("filter")
-        .attr("id", "glow");
-    filter.append("feGaussianBlur")
-        .attr("stdDeviation", "3")
-        .attr("result", "coloredBlur");
-    const feMerge = filter.append("feMerge");
-    feMerge.append("feMergeNode").attr("in", "coloredBlur");
-    feMerge.append("feMergeNode").attr("in", "SourceGraphic");
-
-    // 渐变图例
-    const gradient = defs.append("linearGradient")
-        .attr("id", "treemap-gradient")
-        .attr("x1", "0%")
-        .attr("x2", "100%");
-
-    gradient.append("stop")
-        .attr("offset", "0%")
-        .attr("stop-color", "#10b981");
-
-    gradient.append("stop")
-        .attr("offset", "33%")
-        .attr("stop-color", "#22c55e");
-
-    gradient.append("stop")
-        .attr("offset", "50%")
-        .attr("stop-color", "#f59e0b");
-
-    gradient.append("stop")
-        .attr("offset", "75%")
-        .attr("stop-color", "#f97316");
-
-    gradient.append("stop")
-        .attr("offset", "100%")
-        .attr("stop-color", "#ef4444");
-
-    // 绘制节点组
-    const nodes = svg.selectAll(".country-node")
-        .data(root.leaves())
-        .join("g")
-        .attr("class", "country-node")
-        .attr("transform", d => `translate(${d.x0},${d.y0})`);
-
-    // 绘制矩形
-    nodes.append("rect")
-        .attr("width", d => d.x1 - d.x0)
-        .attr("height", d => d.y1 - d.y0)
-        .attr("fill", d => colorScale(d.data.value))
-        .attr("stroke", "#0a0e1a")
-        .attr("stroke-width", 2.5)
-        .attr("rx", 4)
-        .style("opacity", 0.85)
-        .style("transition", "all 0.3s ease")
-        .on("mouseover", function(event, d) {
-            d3.select(this)
-                .transition()
-                .duration(200)
-                .style("opacity", 1)
-                .attr("stroke", COLORS.primary)
-                .attr("stroke-width", 4)
-                .style("filter", "url(#glow)");
-
-            // 高亮该国家所在的地区标签
-            d3.selectAll(".region-label")
-                .filter(r => r.data.name === d.parent.data.name)
-                .selectAll("text")
-                .transition()
-                .duration(200)
-                .style("font-size", "15px");
-
-            showTooltip(event, `
-                <div class="tooltip-title">${d.data.name}</div>
-                <div class="tooltip-row">
-                    <span>所属地区:</span>
-                    <span>${d.parent.data.name}</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>熬夜率:</span>
-                    <span style="color: ${colorScale(d.data.value)}; font-weight: bold;">${d.data.value.toFixed(1)}%</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>平均睡眠:</span>
-                    <span>${d.data.sleep.toFixed(1)}小时</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>压力等级:</span>
-                    <span>${d.data.stress.toFixed(1)}/10</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>工作时长:</span>
-                    <span>${d.data.workHours}小时/周</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>互联网使用:</span>
-                    <span>${d.data.internetHours.toFixed(1)}小时/天</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>睡眠障碍率:</span>
-                    <span>${d.data.disorder.toFixed(1)}%</span>
-                </div>
-            `);
-        })
-        .on("mouseout", function(event, d) {
-            d3.select(this)
-                .transition()
-                .duration(200)
-                .style("opacity", 0.85)
-                .attr("stroke", "#0a0e1a")
-                .attr("stroke-width", 2.5)
-                .style("filter", "none");
-
-            d3.selectAll(".region-label")
-                .filter(r => r.data.name === d.parent.data.name)
-                .selectAll("text")
-                .transition()
-                .duration(200)
-                .style("font-size", "13px");
-
-            hideTooltip();
-        });
-
-    // 添加国家名称
-    nodes.append("text")
-        .attr("x", d => (d.x1 - d.x0) / 2)
-        .attr("y", d => (d.y1 - d.y0) / 2 - 6)
-        .style("fill", COLORS.bg)
-        .style("font-size", d => {
-            const width = d.x1 - d.x0;
-            const height = d.y1 - d.y0;
-            return Math.min(width / 5, height / 3, 14) + "px";
-        })
-        .style("font-weight", "bold")
-        .style("text-anchor", "middle")
-        .style("pointer-events", "none")
-        .style("text-shadow", "1px 1px 2px rgba(0,0,0,0.5)")
-        .text(d => {
-            const width = d.x1 - d.x0;
-            const name = d.data.name;
-            // 过窄时显示三字简写，保证国家可见
-            if (width < 26) return "";
-            if (width < 60) return name.substring(0, 3);
-            if (name.length > 15) return name.substring(0, 12) + "...";
-            return name;
-        });
-
-    // 添加熬夜率数值
-    nodes.append("text")
-        .attr("x", d => (d.x1 - d.x0) / 2)
-        .attr("y", d => (d.y1 - d.y0) / 2 + 10)
-        .style("fill", COLORS.text)
-        .style("font-size", d => {
-            const width = d.x1 - d.x0;
-            const height = d.y1 - d.y0;
-            return Math.min(width / 6, height / 4, 13) + "px";
-        })
-        .style("font-weight", "700")
-        .style("text-anchor", "middle")
-        .style("pointer-events", "none")
-        .style("text-shadow", "1px 1px 3px rgba(0,0,0,0.8)")
-        .text(d => {
-            const width = d.x1 - d.x0;
-            if (width < 35) return "";
-            return d.data.value.toFixed(0) + "%";
-        });
-
-    // 绘制地区标签 - 只在文字后添加小背景，不遮挡国家方框
-    const regionLabels = svg.selectAll(".region-label")
-        .data(root.children)
-        .join("g")
-        .attr("class", "region-label")
-        .attr("transform", d => `translate(${d.x0 + (d.x1 - d.x0) / 2}, ${d.y0 + 13})`);
-
-    // 文字背景（带模糊效果）
-    regionLabels.append("text")
-        .style("fill", COLORS.bg)
-        .style("font-size", "13px")
-        .style("font-weight", "bold")
-        .style("text-anchor", "middle")
-        .style("stroke", COLORS.bg)
-        .style("stroke-width", "6px")
-        .style("stroke-linejoin", "round")
-        .style("paint-order", "stroke")
-        .style("opacity", 0.9)
-        .style("pointer-events", "none")
-        .text(d => d.data.name);
-
-    // 地区名称文字
-    regionLabels.append("text")
-        .style("fill", d => regionColors[d.data.name] || COLORS.secondary)
-        .style("font-size", "13px")
-        .style("font-weight", "bold")
-        .style("text-anchor", "middle")
-        .style("pointer-events", "none")
-        .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.5))")
-        .text(d => d.data.name);
-
-    // 添加颜色图例
-    const legendWidth = 250;
-    const legendHeight = 14;
-    const legendX = width - legendWidth - 15;
-    const legendY = -45;
-
-    svg.append("text")
-        .attr("x", legendX + legendWidth / 2)
-        .attr("y", legendY)
-        .style("fill", COLORS.text)
-        .style("font-size", "12px")
-        .style("font-weight", "600")
-        .style("text-anchor", "middle")
-        .text("熬夜率热力分布");
-
-    svg.append("rect")
-        .attr("x", legendX)
-        .attr("y", legendY + 6)
-        .attr("width", legendWidth)
-        .attr("height", legendHeight)
-        .style("fill", "url(#treemap-gradient)")
-        .attr("stroke", COLORS.primary)
-        .attr("stroke-width", 1.5)
-        .attr("rx", 3);
-
-    svg.append("text")
-        .attr("x", legendX - 5)
-        .attr("y", legendY + 16)
-        .style("fill", COLORS.text)
-        .style("font-size", "11px")
-        .style("text-anchor", "end")
-        .text("25%");
-
-    svg.append("text")
-        .attr("x", legendX + legendWidth + 5)
-        .attr("y", legendY + 16)
-        .style("fill", COLORS.text)
-        .style("font-size", "11px")
-        .text("75%");
-
-    // 添加统计信息
-    const totalCountries = root.leaves().length;
-    const avgLateNight = d3.mean(root.leaves(), d => d.data.value);
-    
-    svg.append("text")
-        .attr("x", 10)
-        .attr("y", -45)
-        .style("fill", COLORS.text)
-        .style("font-size", "11px")
-        .style("opacity", 0.8)
-        .text(`共 ${totalCountries} 个国家 | 平均熬夜率: ${avgLateNight.toFixed(1)}%`);
-}
-
 // 全球气泡图 - 已注释，不再使用
 /*
 function drawGlobalBubble() {

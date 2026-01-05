@@ -447,6 +447,44 @@
             font-size: 1.2rem;
         }
 
+        /* 自定义滑块样式 */
+        #ageGroupSlider::-webkit-slider-thumb {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent), var(--secondary));
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.6), 0 0 20px rgba(0, 212, 255, 0.3);
+            transition: all 0.2s ease;
+            border: 2px solid white;
+        }
+
+        #ageGroupSlider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.8), 0 0 30px rgba(0, 212, 255, 0.5);
+        }
+
+        #ageGroupSlider::-webkit-slider-thumb:active {
+            transform: scale(1.1);
+        }
+
+        #ageGroupSlider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent), var(--secondary));
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.6), 0 0 20px rgba(0, 212, 255, 0.3);
+            transition: all 0.2s ease;
+            border: 2px solid white;
+        }
+
+        #ageGroupSlider::-moz-range-thumb:hover {
+            transform: scale(1.2);
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.8), 0 0 30px rgba(0, 212, 255, 0.5);
+        }
+
         /* 响应式 */
         @media (max-width: 1200px) {
             .col-4, .col-5, .col-6, .col-7, .col-8 {
@@ -552,17 +590,17 @@
                 </p>
             </div>
 
-            <div class="chart-panel col-6">
+            <div class="chart-panel col-6" style="min-height: 520px;">
                 <div class="chart-header">
                     <div class="chart-title">
-                        <i class="fa-solid fa-chart-column" style="color: var(--tertiary);"></i>
-                        <span>BMI类别与睡眠障碍分布</span>
+                        <i class="fa-solid fa-arrow-right-arrow-left" style="color: var(--tertiary);"></i>
+                        <span>BMI类别与睡眠障碍流向</span>
                     </div>
                 </div>
                 <div class="chart-body" id="stacked-bar-chart"></div>
             </div>
 
-            <div class="chart-panel col-6">
+            <div class="chart-panel col-6" style="min-height: 520px;">
                 <div class="chart-header">
                     <div class="chart-title">
                         <i class="fa-solid fa-chart-line" style="color: var(--pink);"></i>
@@ -584,7 +622,7 @@
         
 
         <div class="charts-grid">
-            <div class="chart-panel col-8">
+            <div class="chart-panel col-12">
                 <div class="chart-header">
                     <div class="chart-title">
                         <i class="fa-solid fa-fire" style="color: var(--danger);"></i>
@@ -598,17 +636,7 @@
                 <div class="chart-body" id="heatmap-chart"></div>
             </div>
 
-            <div class="chart-panel col-4">
-                <div class="chart-header">
-                    <div class="chart-title">
-                        <i class="fa-solid fa-clock" style="color: var(--accent);"></i>
-                        <span>22:00~3:00活跃度</span>
-                    </div>
-                </div>
-                <div class="chart-body" id="clock-chart"></div>
-            </div>
-
-            <div class="chart-panel col-7">
+            <div class="chart-panel col-6">
                 <div class="chart-header">
                     <div class="chart-title">
                         <i class="fa-solid fa-chart-line" style="color: var(--success);"></i>
@@ -618,7 +646,7 @@
                 <div class="chart-body" id="hourly-trend-chart"></div>
             </div>
 
-            <div class="chart-panel col-5">
+            <div class="chart-panel col-6">
                 <div class="chart-header">
                     <div class="chart-title">
                         <i class="fa-solid fa-chart-pie" style="color: var(--tertiary);"></i>
@@ -638,20 +666,19 @@
         </div>
 
         <div class="charts-grid">
-            <div class="chart-panel col-12">
+            <div class="chart-panel col-12" style="min-height: 500px;">
                 <div class="chart-header">
                     <div class="chart-title">
                         <i class="fa-brands fa-instagram" style="color: var(--pink);"></i>
                         <span>社交媒体对睡眠的影响</span>
                     </div>
-                    <div class="chart-controls">
-                        <select class="custom-select" id="ageGroupFilter">
-                            <option value="all">所有年龄段</option>
-                            <option value="18-24">18-24岁</option>
-                            <option value="25-34">25-34岁</option>
-                            <option value="35-44">35-44岁</option>
-                            <option value="45+">45岁以上</option>
-                        </select>
+                    <div class="chart-controls" style="display: flex; flex-direction: column; gap: 8px; min-width: 280px;">
+                        <div id="ageSliderLabel" style="font-size: 0.85rem; color: var(--accent); font-weight: 600; text-align: center;">18-24岁</div>
+                        <div style="position: relative; padding: 0 10px;">
+                            <input type="range" id="ageGroupSlider" min="0" max="4" step="1" value="0" 
+                                   style="width: 100%; cursor: pointer; appearance: none; height: 6px; background: linear-gradient(90deg, var(--accent), var(--secondary)); border-radius: 3px; outline: none;">
+                            <div id="ageSliderMarkers" style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 0.7rem; color: var(--text-muted);"></div>
+                        </div>
                     </div>
                 </div>
                 <div class="chart-body" id="social-impact-chart"></div>
@@ -687,16 +714,6 @@
         </div>
 
         <div class="charts-grid">
-            <div class="chart-panel col-12">
-                <div class="chart-header">
-                    <div class="chart-title">
-                        <i class="fa-solid fa-earth-americas" style="color: var(--secondary);"></i>
-                        <span>各地区熬夜率对比</span>
-                    </div>
-                </div>
-                <div class="chart-body" id="region-chart"></div>
-            </div>
-
             <div class="chart-panel col-6 tall">
                 <div class="chart-header">
                     <div class="chart-title">
