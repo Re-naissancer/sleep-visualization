@@ -247,11 +247,21 @@ function drawScatter() {
         .join("circle")
         .attr("cx", d => x(d.activityLevel))
         .attr("cy", d => y(d.sleepQuality))
-        .attr("r", d => d.sleepDuration * 1.5)
+        .attr("r", 0) // 初始半径为0
         .style("fill", d => color(d.bmi))
-        .style("opacity", 0.6)
+        .style("opacity", 0) // 初始透明度为0
         .style("stroke", "#fff")
         .style("stroke-width", 0.5)
+        .transition() // 添加过渡动画
+        .duration(800)
+        .delay((d, i) => Math.random() * 500) // 随机延迟，产生闪烁出现的效果
+        .attr("r", d => d.sleepDuration * 1.5)
+        .style("opacity", 0.6);
+        
+    // 重新绑定交互事件（注意：过渡后的对象需要重新选择或在过渡前绑定，这里在过渡后绑定会有问题吗？
+    // D3 transition返回的是transition对象，无法直接on。应该在join后直接on，attr放在transition里。
+    
+    svg.selectAll("circle") // 重新选择以绑定事件
         .on("mouseover", (event, d) => {
             showTooltip(event, `
                 <div class="tooltip-title">${d.occupation}</div>
@@ -381,25 +391,38 @@ function drawRadar(userData) {
         .radius(d => rScale(d))
         .curve(d3.curveLinearClosed);
 
+    const lineZero = d3.lineRadial()
+        .angle((d, i) => i * angleSlice)
+        .radius(0)
+        .curve(d3.curveLinearClosed);
+
     const normalizedAvg = features.map(f => normalize(avgData)[f]);
 
     svg.append("path")
         .datum(normalizedAvg)
-        .attr("d", line)
+        .attr("d", lineZero) // 初始形态：收缩在中心
         .style("fill", COLORS.primary)
         .style("fill-opacity", 0.2)
         .style("stroke", COLORS.primary)
-        .style("stroke-width", 2);
+        .style("stroke-width", 2)
+        .transition() // 动画
+        .duration(1000)
+        .ease(d3.easeElasticOut.amplitude(1).period(0.8)) // 弹性效果
+        .attr("d", line);
 
     if (userData) {
         const normalizedUser = features.map(f => normalize(userData)[f]);
         
         svg.append("path")
             .datum(normalizedUser)
-            .attr("d", line)
+            .attr("d", lineZero)
             .style("fill", "none")
             .style("stroke", "#fff")
-            .style("stroke-width", 2.5);
+            .style("stroke-width", 2.5)
+            .transition()
+            .duration(800)
+            .ease(d3.easeCubicOut)
+            .attr("d", line);
     }
 }
 
@@ -505,12 +528,11 @@ function drawStackedBar() {
 
     // 绘制链接（流）
     const linkGroup = svg.append("g").attr("class", "links");
-    
-    links.forEach(link => {
+
+    links.forEach((link, i) => {
         const sourceNode = nodes[link.source];
         const targetNode = nodes[link.target];
         
-        // 为了避免链接厚度超过节点高度，按每个源/目标的总量做归一化
         const availableHeight = Math.min(sourceNode.y1 - sourceNode.y0, targetNode.y1 - targetNode.y0) * 0.8;
         const scaleBase = Math.max(sourceTotals[link.source], targetTotals[link.target]);
         const linkHeight = availableHeight * (link.value / scaleBase);
@@ -521,10 +543,9 @@ function drawStackedBar() {
         const y1 = targetNode.y0 + (targetNode.y1 - targetNode.y0) / 2;
         const xi = d3.interpolateNumber(x0, x1);
         const x2 = xi(0.5);
-        
-        linkGroup.append("path")
-            .attr("d", () => {
-                return `M ${x0} ${y0 - linkHeight/2}
+
+        const path = linkGroup.append("path")
+            .attr("d", `M ${x0} ${y0 - linkHeight/2}
                         C ${x2} ${y0 - linkHeight/2},
                           ${x2} ${y1 - linkHeight/2},
                           ${x1} ${y1 - linkHeight/2}
@@ -532,55 +553,69 @@ function drawStackedBar() {
                         C ${x2} ${y1 + linkHeight/2},
                           ${x2} ${y0 + linkHeight/2},
                           ${x0} ${y0 + linkHeight/2}
-                        Z`;
-            })
+                        Z`)
             .style("fill", bmiColors[sourceNode.name])
-            .style("opacity", 0.3)
-            .style("stroke", "none")
-            .on("mouseover", function(event) {
-                d3.select(this)
-                    .style("opacity", 0.6)
-                    .style("stroke", bmiColors[sourceNode.name])
-                    .style("stroke-width", 1);
-                
-                showTooltip(event, `
-                    <div class="tooltip-title">${sourceNode.name} → ${targetNode.name}</div>
-                    <div class="tooltip-row">
-                        <span>人数:</span>
-                        <span>${link.value} 人</span>
-                    </div>
-                    <div class="tooltip-row">
-                        <span>占比:</span>
-                        <span>${(link.value / totalPeople * 100).toFixed(1)}%</span>
-                    </div>
-                `);
-            })
-            .on("mouseout", function() {
-                d3.select(this)
-                    .style("opacity", 0.3)
-                    .style("stroke", "none");
-                hideTooltip();
-            });
+            .style("opacity", 0)
+            .style("stroke", "none");
+
+        // 动画
+        path.transition()
+            .duration(800)
+            .delay(i * 50)
+            .style("opacity", 0.3);
+
+        // 事件
+        path.on("mouseover", function(event) {
+            d3.select(this)
+                .style("opacity", 0.6)
+                .style("stroke", bmiColors[sourceNode.name])
+                .style("stroke-width", 1);
+            
+            showTooltip(event, `
+                <div class="tooltip-title">${sourceNode.name} → ${targetNode.name}</div>
+                <div class="tooltip-row">
+                    <span>人数:</span>
+                    <span>${link.value} 人</span>
+                </div>
+                <div class="tooltip-row">
+                    <span>占比:</span>
+                    <span>${(link.value / totalPeople * 100).toFixed(1)}%</span>
+                </div>
+            `);
+        })
+        .on("mouseout", function() {
+            d3.select(this)
+                .style("opacity", 0.3)
+                .style("stroke", "none");
+            hideTooltip();
+        });
     });
 
     // 绘制节点
     const nodeGroup = svg.append("g").attr("class", "nodes");
     
-    nodes.forEach(node => {
+    nodes.forEach((node, i) => {
         const g = nodeGroup.append("g");
         
         // 绘制节点矩形
         g.append("rect")
             .attr("x", node.x0)
-            .attr("y", node.y0)
+            .attr("y", node.y0 + (node.y1 - node.y0)/2) // 初始位置在中心
             .attr("width", nodeWidth)
-            .attr("height", node.y1 - node.y0)
+            .attr("height", 0) // 初始高度为0
             .style("fill", node.category === "bmi" ? bmiColors[node.name] : disorderColors[node.name])
             .style("stroke", "#fff")
             .style("stroke-width", 2)
-            .style("rx", 4);
+            .style("rx", 4)
+            .transition() // 展开动画
+            .duration(800)
+            .delay(i * 100)
+            .attr("y", node.y0)
+            .attr("height", node.y1 - node.y0);
         
-        // 添加节点标签
+        // ... (标签代码保持不变，或者添加简单的淡入)
+        // 使用g的opacity来控制文字和矩形的一起淡入也可以，但矩形展开更酷。
+        // 文字延迟显示
         const labelX = node.category === "bmi" ? node.x0 - 10 : node.x1 + 10;
         const textAnchor = node.category === "bmi" ? "end" : "start";
         
@@ -592,7 +627,9 @@ function drawStackedBar() {
             .style("fill", COLORS.text)
             .style("font-size", "12px")
             .style("font-weight", "600")
-            .text(node.name);
+            .style("opacity", 0)
+            .text(node.name)
+            .transition().duration(800).delay(500 + i*100).style("opacity", 1);
         
         // 添加节点数值
         const count = node.category === "bmi" 
@@ -606,8 +643,9 @@ function drawStackedBar() {
             .attr("text-anchor", textAnchor)
             .style("fill", COLORS.text)
             .style("font-size", "10px")
-            .style("opacity", 0.7)
-            .text(`${count}人`);
+            .style("opacity", 0)
+            .text(`${count}人`)
+            .transition().duration(800).delay(600 + i*100).style("opacity", 0.7);
     });
 
     // 添加标题
@@ -690,6 +728,10 @@ function drawStressSleepChart() {
         .attr("d", d3.geoPath())
         .attr("fill", d => color(d.value))
         .attr("stroke", "none")
+        .style("opacity", 0) // 初始透明
+        .transition() // 渐入
+        .duration(1000)
+        .delay((d, i) => i * 20)
         .style("opacity", 0.8);
 
     // 6. 添加散点 (低透明度，用于展示具体分布)
@@ -698,10 +740,15 @@ function drawStressSleepChart() {
         .enter().append("circle")
         .attr("cx", d => x(d.sleepDuration))
         .attr("cy", d => y(d.stressLevel))
-        .attr("r", 2)
+        .attr("r", 0) // 初始半径0
         .style("fill", "#fff")
-        .style("opacity", 0.2)
-        .style("pointer-events", "none"); // 不干扰交互
+        .style("opacity", 0)
+        .style("pointer-events", "none") // 不干扰交互
+        .transition()
+        .duration(800)
+        .delay((d, i) => Math.random() * 800)
+        .attr("r", 2)
+        .style("opacity", 0.2);
 
     // 7. 坐标轴
     svg.append("g")
@@ -790,35 +837,37 @@ function drawStressSleepChart() {
             .text("颜色越暖表示人群越集中");
     }
 }
+// 已删除热力图
+// 已删除饼图
 
 // ===== 第二页：熬夜行为分析 =====
 function initBehaviorPage() {
-    drawHeatmap("weekday");
-    drawActivityPie();
-    drawHourlyTrend();
+    drawStreamgraph();
     
-    // 绑定按钮事件
-    d3.selectAll('[data-type]').on("click", function() {
-        d3.selectAll('[data-type]').classed("active", false);
-        d3.select(this).classed("active", true);
-        drawHeatmap(this.dataset.type);
-    });
+    // 移除旧的按钮绑定
 }
 
-// 热力图
-function drawHeatmap(dayType) {
-    const container = d3.select("#heatmap-chart");
+/* 
+// 热力图 (已删除)
+// 饼图 (已删除)
+*/
+
+// 河流图 (Streamgraph) - 深夜活动流量趋势
+function drawStreamgraph() {
+    const container = d3.select("#streamgraph-chart");
+    if (container.empty()) return;
     container.selectAll("*").remove();
 
-    const data = behaviorData.filter(d => d.dayType === dayType);
-    const activities = ["socialMedia", "gaming", "workStudy", "videoStreaming", "browsing"];
-    const activityLabels = ["社交媒体", "游戏", "工作学习", "视频", "浏览"];
-    
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 40, right: 80, bottom: 40, left: 80};
-    const width = containerWidth - margin.left - margin.right;
-    const height = containerHeight - margin.top - margin.bottom;
+    if (!behaviorData || behaviorData.length === 0) return;
+
+    let containerWidth = container.node().getBoundingClientRect().width;
+    let containerHeight = container.node().getBoundingClientRect().height;
+    if (!containerWidth) containerWidth = container.node().clientWidth || 500;
+    if (!containerHeight) containerHeight = container.node().clientHeight || 300;
+
+    const margin = {top: 20, right: 30, bottom: 30, left: 30};
+    const width = Math.max(0, containerWidth - margin.left - margin.right);
+    const height = Math.max(0, containerHeight - margin.top - margin.bottom);
 
     const svg = container.append("svg")
         .attr("width", containerWidth)
@@ -826,392 +875,248 @@ function drawHeatmap(dayType) {
         .append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    const x = d3.scaleBand()
-        .domain(data.map(d => d.hour + ":00"))
-        .range([0, width])
-        .padding(0.05);
-
-    const y = d3.scaleBand()
-        .domain(activityLabels)
-        .range([0, height])
-        .padding(0.05);
-
-    const colorScale = d3.scaleSequential()
-        .domain([0, 100])
-        .interpolator(d3.interpolateRgb("#1e293b", COLORS.danger));
-
-    // 绘制热力格
-    activities.forEach((activity, i) => {
-        data.forEach(d => {
-            svg.append("rect")
-                .attr("data-hour", d.hour) // 添加 data-hour 属性用于联动
-                .attr("x", x(d.hour + ":00"))
-                .attr("y", y(activityLabels[i]))
-                .attr("width", x.bandwidth())
-                .attr("height", y.bandwidth())
-                .style("fill", colorScale(d[activity]))
-                .style("stroke", "#0a0e1a")
-                .style("stroke-width", 1)
-                .on("mouseover", function(event) {
-                    showTooltip(event, `
-                        <div class="tooltip-title">${d.hour}:00 - ${activityLabels[i]}</div>
-                        <div class="tooltip-row">
-                            <span>活跃度:</span>
-                            <span>${d[activity]}%</span>
-                        </div>
-                        <div class="tooltip-row">
-                            <span>在线人数:</span>
-                            <span>${d.peopleCount}</span>
-                        </div>
-                    `);
-                    d3.select(this).style("stroke-width", 2).style("stroke", COLORS.primary);
-                })
-                .on("mouseout", function() {
-                    hideTooltip();
-                    d3.select(this).style("stroke-width", 1).style("stroke", "#0a0e1a");
-                });
-        });
-    });
-
-    // X轴
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis");
-
-    // Y轴
-    svg.append("g")
-        .call(d3.axisLeft(y))
-        .attr("class", "axis");
-
-    // 颜色图例
-    const legendWidth = 200;
-    const legendHeight = 10;
-    const legendX = width - legendWidth;
-    const legendY = -30;
-
-    const legendScale = d3.scaleLinear()
-        .domain([0, 100])
-        .range([0, legendWidth]);
-
-    const legendAxis = d3.axisBottom(legendScale)
-        .ticks(5)
-        .tickFormat(d => d + "%");
-
-    const defs = svg.append("defs");
-    const gradient = defs.append("linearGradient")
-        .attr("id", "heatmap-gradient");
-
-    gradient.selectAll("stop")
-        .data([
-            {offset: "0%", color: "#1e293b"},
-            {offset: "100%", color: COLORS.danger}
-        ])
-        .join("stop")
-        .attr("offset", d => d.offset)
-        .attr("stop-color", d => d.color);
-
-    svg.append("rect")
-        .attr("x", legendX)
-        .attr("y", legendY)
-        .attr("width", legendWidth)
-        .attr("height", legendHeight)
-        .style("fill", "url(#heatmap-gradient)");
-
-    svg.append("g")
-        .attr("transform", `translate(${legendX},${legendY + legendHeight})`)
-        .call(legendAxis)
-        .attr("class", "axis")
-        .style("font-size", "9px");
-}
-
-// 活动类型玫瑰图 (Nightingale Rose Chart)
-function drawActivityPie() {
-    const container = d3.select("#activity-pie-chart");
-    container.selectAll("*").remove();
-
-    // 统计深夜时段(22-3点)各类活动总量
-    const lateNightData = behaviorData.filter(d => d.hour >= 22 || d.hour <= 3);
-    const activityTotals = {
-        "社交媒体": d3.sum(lateNightData, d => d.socialMedia),
-        "游戏": d3.sum(lateNightData, d => d.gaming),
-        "工作学习": d3.sum(lateNightData, d => d.workStudy),
-        "视频": d3.sum(lateNightData, d => d.videoStreaming),
-        "浏览": d3.sum(lateNightData, d => d.browsing)
+    // 1. 数据预处理
+    const keys = ["socialMedia", "gaming", "workStudy", "videoStreaming", "browsing"];
+    const keyLabels = {
+        "socialMedia": "社交媒体",
+        "gaming": "游戏",
+        "workStudy": "工作学习",
+        "videoStreaming": "视频",
+        "browsing": "浏览"
     };
 
-    const pieData = Object.entries(activityTotals).map(([k, v]) => ({ activity: k, value: v }));
-
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const radius = Math.min(containerWidth, containerHeight) / 2 - 20;
-
-    const svg = container.append("svg")
-        .attr("width", containerWidth)
-        .attr("height", containerHeight)
-        .append("g")
-        .attr("transform", `translate(${containerWidth/2},${containerHeight/2})`);
-
-    const color = d3.scaleOrdinal()
-        .domain(["社交媒体", "游戏", "工作学习", "视频", "浏览"])
-        .range([COLORS.pink, COLORS.danger, COLORS.tertiary, COLORS.secondary, COLORS.success]);
-
-    // 玫瑰图比例尺 - 使用sqrt刻度使面积与数据值成正比
-    const radiusScale = d3.scaleSqrt()
-        .domain([0, d3.max(pieData, d => d.value)])
-        .range([0, radius]);
-
-    const angleScale = d3.scaleBand()
-        .domain(pieData.map(d => d.activity))
-        .range([0, 2 * Math.PI])
-        .align(0);
-
-    const arc = d3.arc()
-        .innerRadius(0)
-        .outerRadius(d => radiusScale(d.value))
-        .startAngle(d => angleScale(d.activity))
-        .endAngle(d => angleScale(d.activity) + angleScale.bandwidth())
-        .padAngle(0.05)
-        .padRadius(0)
-        .cornerRadius(4);
-
-    // 绘制花瓣
-    svg.selectAll("path")
-        .data(pieData)
-        .join("path")
-        .attr("d", arc)
-        .attr("fill", d => color(d.activity))
-        .attr("stroke", "#0a0e1a")
-        .style("stroke-width", "1px")
-        .style("opacity", 0.8)
-        .on("mouseover", function(event, d) {
-            const total = d3.sum(pieData, item => item.value);
-            const pct = (d.value / total * 100).toFixed(1);
-            showTooltip(event, `
-                <div class="tooltip-title">${d.activity}</div>
-                <div class="tooltip-row">
-                    <span>活跃度:</span>
-                    <span>${d.value.toFixed(0)}</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>占比:</span>
-                    <span>${pct}%</span>
-                </div>
-            `);
-            d3.select(this)
-                .transition()
-                .duration(200)
-                .style("opacity", 1)
-                .attr("transform", "scale(1.05)");
-        })
-        .on("mouseout", function() {
-            hideTooltip();
-            d3.select(this)
-                .transition()
-                .duration(200)
-                .style("opacity", 0.8)
-                .attr("transform", "scale(1)");
+    const hours = [22, 23, 0, 1, 2, 3];
+    const groupedData = hours.map(h => {
+        const hourRecords = behaviorData.filter(d => d.hour === h);
+        const obj = { hour: h, displayTime: h + ":00" };
+        keys.forEach(k => {
+            obj[k] = d3.sum(hourRecords, d => d[k]);
         });
+        return obj;
+    });
 
-    // 添加标签
-    svg.selectAll("text")
-        .data(pieData)
-        .join("text")
-        .attr("transform", d => {
-            const angle = angleScale(d.activity) + angleScale.bandwidth() / 2 - Math.PI / 2;
-            const r = radiusScale(d.value) + 15;
-            const x = r * Math.cos(angle);
-            const y = r * Math.sin(angle);
-            return `translate(${x},${y})`;
-        })
-        .attr("text-anchor", "middle")
-        .style("font-size", "11px")
-        .style("fill", COLORS.text)
-        .style("font-weight", "500")
-        .text(d => d.activity);
-}
+    // 2. 堆叠配置
+    // 使用 stackOrderNone 来保持图层顺序与 keys 一致
+    const stack = d3.stack()
+        .keys(keys)
+        .offset(d3.stackOffsetSilhouette)
+        .order(d3.stackOrderNone);
 
-// 每小时人数趋势
-function drawHourlyTrend() {
-    const container = d3.select("#hourly-trend-chart");
-    container.selectAll("*").remove();
+    const series = stack(groupedData);
 
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 30, bottom: 50, left: 60};
-    const width = containerWidth - margin.left - margin.right;
-    const height = containerHeight - margin.top - margin.bottom;
-
-    const svg = container.append("svg")
-        .attr("width", containerWidth)
-        .attr("height", containerHeight)
-        .append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    const weekdayData = behaviorData.filter(d => d.dayType === "weekday");
-    const weekendData = behaviorData.filter(d => d.dayType === "weekend");
-
-    const x = d3.scaleLinear()
-        .domain([22, 27])
+    // 3. 比例尺
+    const x = d3.scalePoint()
+        .domain(hours.map(h => h + ":00"))
         .range([0, width]);
 
+    // Y轴范围
+    const yMin = d3.min(series, layer => d3.min(layer, d => d[0]));
+    const yMax = d3.max(series, layer => d3.max(layer, d => d[1]));
+
     const y = d3.scaleLinear()
-        .domain([0, d3.max(behaviorData, d => d.peopleCount)])
+        .domain([yMin, yMax])
         .range([height, 0]);
 
-    // 网格
-    svg.append("g")
-        .attr("class", "grid")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x).tickSize(-height).tickFormat(""))
-        .style("stroke-opacity", 0.1);
+    // 颜色映射
+    const z = d3.scaleOrdinal()
+        .domain(keys)
+        .range([COLORS.primary, COLORS.secondary, COLORS.tertiary, COLORS.pink, COLORS.success]);
 
-    // 轴
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x)
-            .tickValues([22, 22.5, 23, 23.5, 24, 24.5, 25, 25.5, 26, 26.5, 27])
-            .tickFormat(d => {
-                const minutes = (d % 1) * 60;
-                let hour = Math.floor(d);
-                if (hour >= 24) {
-                    hour = hour - 24;
-                }
-                return hour + ":" + (minutes === 0 ? "00" : "30");
-            }))
-        .attr("class", "axis");
+    // 4. 区域生成器
+    const area = d3.area()
+        .x(d => x(d.data.displayTime))
+        .y0(d => y(d[0]))
+        .y1(d => y(d[1]))
+        .curve(d3.curveBasis);
 
-    svg.append("g")
-        .call(d3.axisLeft(y))
-        .attr("class", "axis");
+    const areaZero = d3.area()
+        .x(d => x(d.data.displayTime))
+        .y0(height) // 从底部升起，或者从中间展开
+        .y1(height) // 这里尝试从底部升起的效果，或者y(d[0]) (如果不offsetSilhouette)
+         // 对于Silhouette，中心对称，最好是从中心展开。
+         // 我们简单点，用 opacity 淡入 + mask 效果，或者用 flat line at center
+         .y0(height/2)
+         .y1(height/2)
+        .curve(d3.curveBasis);
 
-    svg.append("text")
-        .attr("x", width / 2)
-        .attr("y", height + 40)
-        .attr("fill", COLORS.text)
-        .style("text-anchor", "middle")
-        .style("font-size", "11px")
-        .text("时间");
+    // 5. 交互状态
+    let selectedKey = null;
 
-    svg.append("text")
-        .attr("transform", "rotate(-90)")
-        .attr("y", -45)
-        .attr("x", -height / 2)
-        .attr("fill", COLORS.text)
-        .style("text-anchor", "middle")
-        .style("font-size", "11px")
-        .text("在线人数");
+    // 6. 绘制路径
+    svg.selectAll("path")
+        .data(series)
+        .join("path")
+        .attr("d", areaZero) // 初始：扁平
+        .style("fill", d => z(d.key))
+        .style("opacity", 0)
+        .style("cursor", "crosshair")
+        .transition() // 动画
+        .duration(1200)
+        .delay((d, i) => i * 100)
+        .ease(d3.easeCubicOut)
+        .attr("d", area)
+        .style("opacity", 0.9);
+        
+    // 重新选择路径以绑定事件
+    const paths = svg.selectAll("path");
 
-    // 线条生成器
-    const line = d3.line()
-        .x(d => x(d.hour > 3 ? d.hour : d.hour + 24))
-        .y(d => y(d.peopleCount))
-        .curve(d3.curveMonotoneX);
+    // 7. 添加垂直指示线
+    const verticalLine = svg.append("line")
+        .attr("stroke", "rgba(255,255,255,0.5)")
+        .attr("stroke-width", 1)
+        .attr("stroke-dasharray", "4 4")
+        .style("opacity", 0)
+        .style("pointer-events", "none");
 
-    // 绘制工作日线
-    svg.append("path")
-        .datum(weekdayData)
-        .attr("d", line)
-        .style("fill", "none")
-        .style("stroke", COLORS.primary)
-        .style("stroke-width", 2.5);
+    const timeLabel = svg.append("text")
+        .attr("y", height + 20) 
+        .attr("text-anchor", "middle")
+        .style("fill", COLORS.text)
+        .style("font-size", "12px")
+        .style("opacity", 0);
 
-    // 绘制周末线
-    svg.append("path")
-        .datum(weekendData)
-        .attr("d", line)
-        .style("fill", "none")
-        .style("stroke", COLORS.pink)
-        .style("stroke-width", 2.5)
-        .style("stroke-dasharray", "5,5");
-
-    // 添加交互点
-    const allPoints = [
-        ...weekdayData.map(d => ({...d, type: 'weekday', color: COLORS.primary})),
-        ...weekendData.map(d => ({...d, type: 'weekend', color: COLORS.pink}))
-    ];
-
-    svg.selectAll(".trend-point")
-        .data(allPoints)
-        .enter()
-        .append("circle")
-        .attr("class", "trend-point")
-        .attr("cx", d => x(d.hour > 3 ? d.hour : d.hour + 24))
-        .attr("cy", d => y(d.peopleCount))
-        .attr("r", 4)
-        .style("fill", d => d.color)
-        .style("stroke", "#fff")
-        .style("stroke-width", 1)
-        .style("cursor", "pointer")
-        .on("mouseover", function(event, d) {
-            // 放大当前点
-            d3.select(this)
-                .transition().duration(200)
-                .attr("r", 8)
-                .style("stroke-width", 3);
-
-            // 显示 Tooltip
-            showTooltip(event, `
-                <div class="tooltip-title">${d.hour}:00 (${d.type === 'weekday' ? '工作日' : '周末'})</div>
-                <div class="tooltip-row">
-                    <span>在线人数:</span>
-                    <span>${d.peopleCount}</span>
-                </div>
-            `);
-
-            // 联动热力图：高亮对应时间的方块
-            const heatmapRects = d3.select("#heatmap-chart").selectAll(`rect[data-hour='${d.hour}']`);
+    // 8. 交互事件层 (覆盖全图)
+    svg.append("rect")
+        .attr("width", width)
+        .attr("height", height)
+        .style("fill", "transparent")
+        .on("mousemove", function(event) {
+            const [mouseX] = d3.pointer(event);
             
-            heatmapRects
-                .transition().duration(200)
-                .style("stroke", "#fff")
-                .style("stroke-width", 2)
-                .style("filter", "brightness(1.3)");
+            // 找到最近的时间点
+            const step = width / (hours.length - 1);
+            const index = Math.round(mouseX / step);
+            const safeIndex = Math.max(0, Math.min(index, hours.length - 1));
+            const currentHourObj = groupedData[safeIndex];
+            const currentX = x(currentHourObj.displayTime);
+
+            // 更新指示线
+            verticalLine
+                .attr("x1", currentX)
+                .attr("x2", currentX)
+                .attr("y1", 0)
+                .attr("y2", height)
+                .style("opacity", 1);
+            
+            timeLabel
+                .attr("x", currentX)
+                .text(currentHourObj.displayTime)
+                .style("opacity", 1);
+
+            // 确定当前鼠标下的区域 (大致反推)
+            // 更简便的方法：直接查看堆叠数据中在当前索引的值
+            // 但这还需要判断Y轴。
+            // 优化方案：直接遍历series，看哪一个的y0/y1区间包含了mouseY
+            const [_, mouseY] = d3.pointer(event);
+            
+            let hoveredKey = null;
+            let hoveredValue = 0;
+
+            // 遍历所有层来检测鼠标在哪个层内
+            // 由于曲线是curveBasis，Y值与数据点Y值不完全一致，这里用近似判断
+            // 或者：直接显示该时间点所有类型的数值列表
+            
+            let tooltipHtml = `<div class="tooltip-title">${currentHourObj.displayTime}</div>`;
+            
+            // 为了让 Tooltip 与图例和视觉上从上到下的顺序一致
+            // 由于 stackOrderNone 绘制是 index 0 在最底，index N 在最顶
+            // 如果我们视觉上看（假设Silhouette是从中线往上下扩），通常最后的元素可能在最上面或最下面取决于具体偏移
+            // 但一般逻辑上，为了匹配图例（图例通常是上到下列表），我们倒序遍历 keys 显示
+            const reversedSeries = [...series].reverse();
+            
+            reversedSeries.forEach(s => {
+                const key = s.key;
+                const val = currentHourObj[key]; // 原始值
+                // 高亮逻辑
+                if (selectedKey && key !== selectedKey) return;
+                
+                tooltipHtml += `
+                <div class="tooltip-row" style="color: ${z(key)}; margin-bottom: 2px;">
+                    <span style="display:inline-block;width:8px;height:8px;background:${z(key)};margin-right:5px;border-radius:2px;"></span>
+                    <span>${keyLabels[key]}:</span>
+                    <span style="font-weight:bold;margin-left:auto;">${val}</span>
+                </div>`;
+            });
+
+            // 尝试判断具体hover的是哪个
+            // 简单逻辑：如果用户点击了某个色块，就锁定它。
+            
+            showTooltip(event, tooltipHtml);
         })
-        .on("mouseout", function(event, d) {
-            // 恢复当前点
-            d3.select(this)
-                .transition().duration(200)
-                .attr("r", 4)
-                .style("stroke-width", 1);
-
+        .on("mouseout", function() {
+            verticalLine.style("opacity", 0);
+            timeLabel.style("opacity", 0);
             hideTooltip();
-
-            // 恢复热力图
-            const heatmapRects = d3.select("#heatmap-chart").selectAll(`rect[data-hour='${d.hour}']`);
-            
-            heatmapRects
-                .transition().duration(200)
-                .style("stroke", "#0a0e1a")
-                .style("stroke-width", 1)
-                .style("filter", "none");
+        })
+        .on("click", function(event) {
+             // 简单的点击切换：无 -> 有 -> 无
+             // 这里其实不需要复杂的点击逻辑，因为mousemove已经显示了该列所有数据
+             // 我们可以做一个 "冻结 tooltip" 的功能，或者什么都不做
         });
-
-    // 图例
-    const legend = svg.append("g").attr("transform", `translate(${width - 100}, 10)`);
-    
-    const legendData = [
-        { label: "工作日", color: COLORS.primary, dash: false },
-        { label: "周末", color: COLORS.pink, dash: true }
-    ];
-
-    legendData.forEach((item, i) => {
-        const g = legend.append("g").attr("transform", `translate(0,${i * 20})`);
-        g.append("line")
-            .attr("x1", 0)
-            .attr("x2", 20)
-            .attr("y1", 6)
-            .attr("y2", 6)
-            .style("stroke", item.color)
-            .style("stroke-width", 2.5)
-            .style("stroke-dasharray", item.dash ? "5,5" : "none");
-        g.append("text")
-            .attr("x", 25)
-            .attr("y", 10)
-            .text(item.label)
-            .style("fill", COLORS.text)
-            .style("font-size", "11px");
+        
+    // 9. 单独给路径加点击，用于高亮某个类别
+    paths.on("click", function(event, d) {
+        event.stopPropagation(); // 阻止冒泡到背景rect
+        if (selectedKey === d.key) {
+            selectedKey = null; // 取消选择
+            paths.style("opacity", 0.9).style("stroke", "none");
+        } else {
+            selectedKey = d.key;
+            paths.style("opacity", 0.2); // 其他变淡
+            d3.select(this).style("opacity", 1).style("stroke", "#fff").style("stroke-width", 1);
+        }
     });
+
+    // 10. 添加X轴
+    const xAxis = svg.append("g")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(x).tickSize(0).tickPadding(10));
+        
+    xAxis.select(".domain").remove();
+
+    xAxis.selectAll(".tick text")
+        .style("fill", COLORS.text)
+        .style("font-size", "11px");
+
+    // X轴淡入
+    xAxis.style("opacity", 0)
+        .transition()
+        .duration(1000)
+        .delay(1200)
+        .style("opacity", 1)
+        .on("end", () => console.log("X轴动画完成"));
+
+    // 11. 图例
+    const legend = svg.append("g")
+        .attr("transform", `translate(${width - 80}, 0)`);
+        
+    // 倒序遍历 keys 以匹配从上到下的视觉顺序
+    [...keys].reverse().forEach((key, i) => {
+        const g = legend.append("g")
+            .attr("transform", `translate(0, ${i * 15})`);
+            
+        g.append("rect")
+            .attr("width", 8)
+            .attr("height", 8)
+            .attr("rx", 2)
+            .style("fill", z(key));
+            
+        g.append("text")
+            .attr("x", 12)
+            .attr("y", 8)
+            .text(keyLabels[key])
+            .style("fill", "rgba(255,255,255,0.7)")
+            .style("font-size", "10px")
+            .style("alignment-baseline", "middle");
+    });
+    
+    // 图例淡入
+    legend.style("opacity", 0)
+        .transition()
+        .duration(1000)
+        .delay(1200)
+        .style("opacity", 1)
+        .on("end", () => console.log("图例动画完成"));
 }
 
 // ===== 工具函数 =====
@@ -1267,28 +1172,23 @@ window.addEventListener('resize', () => {
             drawStackedBar();
             drawStressSleepChart();
         } else if (activePage === "page-behavior") {
-            const activeType = d3.select('[data-type].active').node()?.dataset.type || "weekday";
-            drawHeatmap(activeType);
-            drawActivityPie();
-            drawHourlyTrend();
+            drawStreamgraph();
         } else if (activePage === "page-health") {
             const ageGroups = ["18-24", "25-34", "35-44", "45+", "all"];
             const sliderValue = d3.select('#ageGroupSlider').node()?.value || 0;
             const activeAge = ageGroups[sliderValue];
-            drawSocialImpact(activeAge);
-            drawHoursSleep();
+            drawParallelCoords(activeAge);
             drawAddiction();
         } else if (activePage === "page-global") {
             drawWorldMap();
             drawGlobalRanking();
         }
-    }, 300);
+    }, 500); // 增加延时以确保容器渲染
 });
 
 // ===== 第三页：健康影响分析 =====
 function initHealthPage() {
-    drawSocialImpact("18-24");
-    drawHoursSleep();
+    drawParallelCoords("18-24");
     drawAddiction();
     
     // 初始化年龄段滑块
@@ -1331,7 +1231,7 @@ function initHealthPage() {
             .style("font-weight", "700")
             .style("transform", "scale(1.15)");
         
-        drawSocialImpact(selectedGroup.value);
+        drawParallelCoords(selectedGroup.value);
     });
     
     // 初始化第一个标记为高亮
@@ -1341,18 +1241,32 @@ function initHealthPage() {
         .style("transform", "scale(1.15)");
 }
 
-// 社交媒体对睡眠的影响
-function drawSocialImpact(ageGroup) {
-    const container = d3.select("#social-impact-chart");
+// 平行坐标图 - 多维睡眠影响因子溯源
+function drawParallelCoords(filterAgeGroup) {
+    const container = d3.select("#parallel-coords-chart");
+    if (container.empty()) return;
     container.selectAll("*").remove();
-
-    let data = ageGroup === "all" ? socialData : socialData.filter(d => d.ageGroup === ageGroup);
     
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 160, bottom: 60, left: 60};
-    const width = containerWidth - margin.left - margin.right;
-    const height = containerHeight - margin.top - margin.bottom;
+    // 如果没有传入过滤年龄组，默认为第一组 "18-24" (因为初始化时滑块在0) 
+    // 或者默认为 "all" 如果你想默认显示所有。
+    // 根据上面初始化代码: drawSocialImpact("18-24"); 
+    if (!filterAgeGroup) filterAgeGroup = "18-24"; 
+
+    // 数据检查
+    if (!socialData || socialData.length === 0) {
+        console.warn("Social data is empty");
+        return;
+    }
+
+    let containerWidth = container.node().getBoundingClientRect().width;
+    let containerHeight = container.node().getBoundingClientRect().height;
+
+    if (!containerWidth) containerWidth = container.node().clientWidth || 800;
+    if (!containerHeight) containerHeight = container.node().clientHeight || 500;
+
+    const margin = {top: 30, right: 30, bottom: 60, left: 30};
+    const width = Math.max(0, containerWidth - margin.left - margin.right);
+    const height = Math.max(0, containerHeight - margin.top - margin.bottom);
 
     const svg = container.append("svg")
         .attr("width", containerWidth)
@@ -1360,272 +1274,178 @@ function drawSocialImpact(ageGroup) {
         .append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    // 按平台分组
-    const platforms = Array.from(new Set(data.map(d => d.platform)));
-    const groupedData = platforms.map(platform => {
-        const platformData = data.filter(d => d.platform === platform);
-        return {
-            platform,
-            avgUsage: d3.mean(platformData, d => d.lateNightUsage),
-            avgSleep: d3.mean(platformData, d => d.sleepQuality)
-        };
+    // Definition of dimensions and plotting logic...
+    const dimensions = ["dailyHours", "lateNightUsage", "addiction", "sleepQuality"];
+    
+    const dimensionLabels = {
+        "dailyHours": "日均时长",
+        "lateNightUsage": "深夜使用率(%)",
+        "addiction": "成瘾指数",
+        "sleepQuality": "睡眠质量"
+    };
+
+    const y = {};
+    dimensions.forEach(name => {
+        y[name] = d3.scaleLinear()
+            .domain(d3.extent(socialData, d => +d[name]))
+            .range([height, 0]);
     });
 
-    const x = d3.scaleBand()
-        .domain(platforms)
+    const x = d3.scalePoint()
         .range([0, width])
-        .padding(0.3);
-
-    const colorScale = d3.scaleOrdinal()
-        .domain(platforms)
-        .range(d3.schemeTableau10);
-
-    const y1 = d3.scaleLinear()
-        .domain([0, 100])
-        .range([height, 0]);
-
-    const y2 = d3.scaleLinear()
-        .domain([0, 10])
-        .range([height, 0]);
-
-    // 网格
-    svg.append("g")
-        .attr("class", "grid")
-        .call(d3.axisLeft(y1).tickSize(-width).tickFormat(""))
-        .style("stroke-opacity", 0.1);
-
-    // 绘制柱状图（深夜使用率）
-    svg.selectAll(".bar")
-        .data(groupedData)
-        .join("rect")
-        .attr("class", "bar")
-        .attr("x", d => x(d.platform))
-        .attr("y", d => y1(d.avgUsage))
-        .attr("width", x.bandwidth())
-        .attr("height", d => height - y1(d.avgUsage))
-        .attr("fill", d => colorScale(d.platform))
-        .attr("opacity", 0.7)
-        .on("mouseover", function(event, d) {
-            showTooltip(event, `
-                <div class="tooltip-title">${d.platform}</div>
-                <div class="tooltip-row">
-                    <span>深夜使用率:</span>
-                    <span>${d.avgUsage.toFixed(1)}%</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>睡眠质量:</span>
-                    <span>${d.avgSleep.toFixed(1)}/10</span>
-                </div>
-            `);
-            d3.select(this).attr("opacity", 0.95);
-        })
-        .on("mouseout", function() {
-            hideTooltip();
-            d3.select(this).attr("opacity", 0.7);
-        });
-
-    // 绘制折线图（睡眠质量）
-    const line = d3.line()
-        .x(d => x(d.platform) + x.bandwidth() / 2)
-        .y(d => y2(d.avgSleep))
-        .curve(d3.curveMonotoneX);
-
-    svg.append("path")
-        .datum(groupedData)
-        .attr("d", line)
-        .style("fill", "none")
-        .style("stroke", COLORS.success)
-        .style("stroke-width", 3);
-
-    svg.selectAll(".dot")
-        .data(groupedData)
-        .join("circle")
-        .attr("class", "dot")
-        .attr("cx", d => x(d.platform) + x.bandwidth() / 2)
-        .attr("cy", d => y2(d.avgSleep))
-        .attr("r", 5)
-        .attr("fill", COLORS.success)
-        .attr("stroke", "#fff")
-        .attr("stroke-width", 2);
-
-    // X轴
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis")
-        .selectAll("text")
-        .attr("transform", "rotate(-15)")
-        .style("text-anchor", "end");
-
-    // Y轴（左）
-    svg.append("g")
-        .call(d3.axisLeft(y1).tickFormat(d => d + "%"))
-        .attr("class", "axis");
-
-    svg.append("text")
-        .attr("transform", "rotate(-90)")
-        .attr("y", -45)
-        .attr("x", -height / 2)
-        .attr("fill", COLORS.pink)
-        .style("text-anchor", "middle")
-        .style("font-size", "11px")
-        .text("深夜使用率 (%)");
-
-    // Y轴（右）
-    svg.append("g")
-        .attr("transform", `translate(${width},0)`)
-        .call(d3.axisRight(y2))
-        .attr("class", "axis");
-
-    // 图例（平台颜色 + 睡眠质量线）
-    const legend = svg.append("g").attr("transform", `translate(${width + 20}, 10)`);
-    platforms.forEach((platform, i) => {
-        const g = legend.append("g").attr("transform", `translate(0,${i * 18})`);
-        g.append("rect")
-            .attr("x", 0)
-            .attr("y", -6)
-            .attr("width", 12)
-            .attr("height", 12)
-            .attr("rx", 2)
-            .style("fill", colorScale(platform));
-        g.append("text")
-            .attr("x", 18)
-            .attr("y", 4)
-            .text(platform)
-            .style("fill", COLORS.text)
-            .style("font-size", "11px");
-    });
-
-    const lineLegend = legend.append("g").attr("transform", `translate(0,${platforms.length * 18 + 10})`);
-    lineLegend.append("line")
-        .attr("x1", 0)
-        .attr("x2", 16)
-        .attr("y1", 4)
-        .attr("y2", 4)
-        .style("stroke", COLORS.success)
-        .style("stroke-width", 3);
-    lineLegend.append("text")
-        .attr("x", 20)
-        .attr("y", 8)
-        .text("睡眠质量")
-        .style("fill", COLORS.text)
-        .style("font-size", "11px");
-}
-
-// 使用时长与睡眠质量关系
-function drawHoursSleep() {
-    const container = d3.select("#hours-sleep-chart");
-    container.selectAll("*").remove();
-
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 30, bottom: 50, left: 60};
-    const width = containerWidth - margin.left - margin.right;
-    const height = containerHeight - margin.top - margin.bottom;
-
-    const svg = container.append("svg")
-        .attr("width", containerWidth)
-        .attr("height", containerHeight)
-        .append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    const x = d3.scaleLinear()
-        .domain([0, d3.max(socialData, d => d.dailyHours) + 0.5])
-        .range([0, width]);
-
-    const y = d3.scaleLinear()
-        .domain([0, 10])
-        .range([height, 0]);
+        .padding(0.1)
+        .domain(dimensions);
 
     const colorScale = d3.scaleOrdinal()
         .domain(["18-24", "25-34", "35-44", "45+"])
         .range([COLORS.danger, COLORS.tertiary, COLORS.secondary, COLORS.success]);
 
-    // 网格
-    svg.append("g")
-        .attr("class", "grid")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x).tickSize(-height).tickFormat(""))
-        .style("stroke-opacity", 0.1);
+    function path(d) {
+        return d3.line()(dimensions.map(p => [x(p), y[p](d[p])]));
+    }
 
-    svg.append("g")
-        .attr("class", "grid")
-        .call(d3.axisLeft(y).tickSize(-width).tickFormat(""))
-        .style("stroke-opacity", 0.1);
-
-    // 轴
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis");
-
-    svg.append("g")
-        .call(d3.axisLeft(y))
-        .attr("class", "axis");
-
-    svg.append("text")
-        .attr("x", width / 2)
-        .attr("y", height + 40)
-        .attr("fill", COLORS.text)
-        .style("text-anchor", "middle")
-        .style("font-size", "11px")
-        .text("日均使用时长 (小时)");
-
-    // 绘制散点
-    svg.selectAll("circle")
+    const paths = svg.selectAll("myPath")
         .data(socialData)
-        .join("circle")
-        .attr("cx", d => x(d.dailyHours))
-        .attr("cy", d => y(d.sleepQuality))
-        .attr("r", 7)
-        .attr("fill", d => colorScale(d.ageGroup))
-        .attr("opacity", 0.75)
-        .attr("stroke", "#fff")
-        .attr("stroke-width", 1)
-        .on("mouseover", function(event, d) {
-            showTooltip(event, `
-                <div class="tooltip-title">${d.platform} - ${d.ageGroup}</div>
-                <div class="tooltip-row">
-                    <span>日均使用:</span>
-                    <span>${d.dailyHours}小时</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>睡眠质量:</span>
-                    <span>${d.sleepQuality}/10</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>平均睡眠:</span>
-                    <span>${d.avgSleep}小时</span>
-                </div>
-            `);
-            d3.select(this).attr("opacity", 1).attr("stroke-width", 2);
-        })
-        .on("mouseout", function() {
-            hideTooltip();
-            d3.select(this).attr("opacity", 0.75).attr("stroke-width", 1);
+        .join("path")
+        .attr("d", path)
+        .style("fill", "none")
+        .style("stroke", d => colorScale(d.ageGroup))
+        .style("opacity", 0) // 初始不可见
+        .style("stroke-width", d => {
+            if (filterAgeGroup && filterAgeGroup !== "all") {
+                return d.ageGroup === filterAgeGroup ? 3 : 1;
+            }
+            return 2;
         });
 
-    // 图例
-    const legend = svg.append("g").attr("transform", `translate(${width - 100}, 10)`);
-    const ageGroups = ["18-24", "25-34", "35-44", "45+"];
+    // 添加绘制动画
+    paths.transition()
+        .duration(1000)
+        .delay((d, i) => i * 5) // 错开每一个数据
+        .style("opacity", d => {
+             // 恢复目标透明度
+            if (filterAgeGroup && filterAgeGroup !== "all") {
+                return d.ageGroup === filterAgeGroup ? 0.8 : 0.05;
+            }
+            return 0.5;
+        })
+        .attrTween("stroke-dasharray", function() {
+            const length = this.getTotalLength();
+            return d3.interpolate(`0,${length}`, `${length},${length}`);
+        });
+
+    // 绑定交互事件
+    paths.on("mouseover", function(event, d) {
+            d3.select(this)
+                .style("stroke-width", 5)
+                .style("opacity", 1)
+                .style("filter", "drop-shadow(0 0 5px " + colorScale(d.ageGroup) + ")");
+            
+            // Mouseover behavior respects filter
+            if (!filterAgeGroup || filterAgeGroup === "all") {
+                svg.selectAll("path").filter(function() {
+                    return this !== event.currentTarget;
+                }).style("opacity", 0.05);
+            }
+
+            // 联动右图：高亮对应平台
+            highlightAddictionPlatform(d.platform, true);
+
+            showTooltip(event, `
+                <div class="tooltip-title">${d.platform} (${d.ageGroup})</div>
+                <div class="tooltip-row"><span>日均时长:</span><span>${d.dailyHours}h</span></div>
+                <div class="tooltip-row"><span>深夜使用:</span><span>${d.lateNightUsage}%</span></div>
+                <div class="tooltip-row"><span>成瘾指数:</span><span>${d.addiction}</span></div>
+                <div class="tooltip-row"><span>睡眠质量:</span><span>${d.sleepQuality}</span></div>
+            `);
+        })
+        .on("mouseout", function() {
+            paths
+                .style("opacity", d => {
+                    if (filterAgeGroup && filterAgeGroup !== "all") {
+                        return d.ageGroup === filterAgeGroup ? 0.8 : 0.05;
+                    }
+                    return 0.5;
+                })
+                .style("stroke-width", d => {
+                    if (filterAgeGroup && filterAgeGroup !== "all") {
+                        return d.ageGroup === filterAgeGroup ? 3 : 1;
+                    }
+                    return 2;
+                })
+                .style("filter", "none");
+            
+            // 取消右图高亮
+            highlightAddictionPlatform(null, false);
+            
+            hideTooltip();
+        });
+
+    svg.selectAll("myAxis")
+        .data(dimensions)
+        .enter()
+        .append("g")
+        .attr("transform", d => `translate(${x(d)})`)
+        .each(function(d) { d3.select(this).call(d3.axisLeft(y[d])); })
+        .attr("class", "axis")
+        .style("color", "#64748b")
+        .append("text")
+        .style("text-anchor", "middle")
+        .attr("y", -9)
+        .text(d => dimensionLabels[d])
+        .style("fill", COLORS.text)
+        .style("font-size", "11px")
+        .style("font-weight", "bold");
+        
+    // 图例 (Color key)
+    const legend = svg.append("g")
+        .attr("transform", `translate(${width/2 - 100}, ${height + 30})`);
     
-    ageGroups.forEach((age, i) => {
-        const g = legend.append("g").attr("transform", `translate(0,${i * 20})`);
-        g.append("circle")
-            .attr("cx", 6)
-            .attr("cy", 6)
-            .attr("r", 5)
-            .style("fill", colorScale(age))
-            .style("opacity", 0.75)
-            .style("stroke", "#fff")
-            .style("stroke-width", 1);
+    ["18-24", "25-34", "35-44", "45+"].forEach((age, i) => {
+        const g = legend.append("g").attr("transform", `translate(${i * 60}, 0)`);
+        g.append("rect")
+            .attr("width", 8)
+            .attr("height", 8)
+            .attr("rx", 2)
+            .style("fill", colorScale(age));
         g.append("text")
-            .attr("x", 15)
-            .attr("y", 10)
+            .attr("x", 12)
+            .attr("y", 8)
             .text(age)
-            .style("fill", COLORS.text)
+            .style("fill", "#94a3b8")
             .style("font-size", "10px");
     });
+}
+
+// 高亮成瘾指数图中的特定平台
+function highlightAddictionPlatform(platform, highlight) {
+    if (highlight && platform) {
+        // 高亮指定平台
+        d3.selectAll(".addiction-ring")
+            .style("opacity", function() {
+                return d3.select(this).attr("data-platform") === platform ? 1 : 0.2;
+            })
+            .style("filter", function() {
+                return d3.select(this).attr("data-platform") === platform ? "drop-shadow(0 0 8px currentColor)" : "none";
+            });
+        
+        d3.selectAll(".addiction-label")
+            .style("opacity", function() {
+                return d3.select(this).attr("data-platform") === platform ? 1 : 0.3;
+            })
+            .style("font-weight", function() {
+                return d3.select(this).attr("data-platform") === platform ? "bold" : "normal";
+            });
+    } else {
+        // 恢复所有平台
+        d3.selectAll(".addiction-ring")
+            .style("opacity", 1)
+            .style("filter", "none");
+        
+        d3.selectAll(".addiction-label")
+            .style("opacity", 1)
+            .style("font-weight", "bold");
+    }
 }
 
 // 平台成瘾指数对比 - 径向条形图 (Radial Bar Chart / Activity Rings)
@@ -1685,6 +1505,10 @@ function drawAddiction() {
         svg.append("path")
             .attr("d", bgArc)
             .style("fill", "#333")
+            .style("opacity", 0)
+            .transition()
+            .duration(800)
+            .delay(i * 100)
             .style("opacity", 0.3);
             
         // 数值环
@@ -1696,61 +1520,82 @@ function drawAddiction() {
             .cornerRadius(ringWidth / 2);
             
         svg.append("path")
-            .attr("d", valArc)
+            // .attr("d", valArc) // 不能直接设置最终形态
+            .datum({ endAngle: 0 }) // 初始状态：角度为0
+            .attr("class", "addiction-ring")
+            .attr("data-platform", d.platform)
             .style("fill", colorScale(d.platform))
-            .on("mouseover", (event) => {
-                 showTooltip(event, `
-                    <div class="tooltip-title">${d.platform}</div>
-                    <div class="tooltip-row">
-                        <span>成瘾指数:</span>
-                        <span>${d.addiction.toFixed(1)}/5</span>
-                    </div>
-                `);
-                 d3.select(event.currentTarget).style("opacity", 0.8);
+            .attr("d", d3.arc() // 初始空路径
+                .innerRadius(r)
+                .outerRadius(r + ringWidth)
+                .startAngle(0)
+                .endAngle(0)
+                .cornerRadius(ringWidth / 2)
+             )
+            .transition()
+            .duration(1500)
+            .delay(i * 100 + 200)
+            .ease(d3.easeCubicOut)
+            .attrTween("d", function() {
+                const i = d3.interpolate(0, angleScale(d.addiction));
+                return function(t) {
+                    d.endAngle = i(t);
+                    return d3.arc()
+                        .innerRadius(r)
+                        .outerRadius(r + ringWidth)
+                        .startAngle(0)
+                        .endAngle(i(t))
+                        .cornerRadius(ringWidth / 2)();
+                };
             })
-            .on("mouseout", (event) => {
-                hideTooltip();
-                d3.select(event.currentTarget).style("opacity", 1);
+            // 动画完成后绑定事件。或者直接在前边Selection上绑定。
+            // 事件绑定在transition之后通常需要end事件
+            .on("end", function() {
+                d3.select(this)
+                 .on("mouseover", (event) => {
+                     showTooltip(event, `
+                        <div class="tooltip-title">${d.platform}</div>
+                        <div class="tooltip-row">
+                            <span>成瘾指数:</span>
+                            <span>${d.addiction.toFixed(1)}/5</span>
+                        </div>
+                    `);
+                     d3.select(event.currentTarget).style("opacity", 0.8);
+                })
+                .on("mouseout", (event) => {
+                    hideTooltip();
+                    d3.select(event.currentTarget).style("opacity", 1);
+                });
             });
 
         // 在环的起点添加图标或文字
-        // 这里简单添加文字标签在环的左侧（缺口处）
-        // 计算缺口处的坐标
-        // 270度缺口在左上角 (1.5 PI) 到 0度 (12点钟? 不，d3 arc 0度是12点钟顺时针)
-        // d3.arc 0 is at 12 o'clock usually? No, 0 is at 12 o'clock if we rotate?
-        // Standard d3.arc: 0 is up (12 o'clock), PI/2 is right (3 o'clock).
-        // Wait, standard math 0 is right. d3.arc 0 is 12 o'clock.
-        // Let's check d3 docs mentally: 0 is 12 o'clock.
-        // So 0 to 1.5 PI is 12 -> 3 -> 6 -> 9. The gap is 9 to 12 (top-left).
-        
-        // Let's put labels in the gap area.
+        // 延迟显示
         svg.append("text")
+            .attr("class", "addiction-label")
+            .attr("data-platform", d.platform)
             .attr("x", -10) 
             .attr("y", -r - ringWidth/2 + 4) // 垂直对齐到环中心
             .attr("text-anchor", "end")
             .text(d.platform)
             .style("fill", COLORS.text)
             .style("font-size", "10px")
-            .style("font-weight", "bold");
+            .style("font-weight", "bold")
+            .style("opacity", 0)
+            .transition().duration(800).delay(i * 100).style("opacity", 1);
             
         // 在环的终点添加数值
         const endAngle = angleScale(d.addiction);
-        const centroid = d3.arc()
-            .innerRadius(r)
-            .outerRadius(r + ringWidth)
-            .startAngle(endAngle - 0.1) // slightly back
-            .endAngle(endAngle)
-            .centroid();
+        // ... (省略 centroid 计算，直接显示在左侧方便)
             
-        // 如果数值太小，文字可能会重叠，这里简化处理
-        // 也可以把数值放在标签旁边
         svg.append("text")
             .attr("x", -10)
             .attr("y", -r - ringWidth/2 + 14) // 标签下方
             .attr("text-anchor", "end")
             .text(d.addiction.toFixed(1))
             .style("fill", colorScale(d.platform))
-            .style("font-size", "9px");
+            .style("font-size", "9px")
+            .style("opacity", 0)
+            .transition().duration(800).delay(i * 100 + 500).style("opacity", 1);
     });
     
     // 中心添加标题
@@ -1888,6 +1733,9 @@ function drawWorldMap() {
             })
             .attr("stroke", "#0a0e1a")
             .attr("stroke-width", 0.7)
+            .style("opacity", 1);
+        
+        countryGroups.selectAll(".country-top")
             .on("mouseover", (event, d) => {
                 const data = getCountryStats(d);
                 const hasData = Boolean(data);
@@ -2016,96 +1864,235 @@ function drawWorldMap() {
     }
 }
 
-// 全球睡眠时长排名
+// 全球睡眠时长排名 - 极坐标辐射柱状图 (Circular Barplot)
 function drawGlobalRanking(ascending = true) {
     const container = d3.select("#global-ranking-chart");
     container.selectAll("*").remove();
 
-    const sortedData = [...globalData].sort((a, b) => 
+    // 排序逻辑
+    const allData = [...globalData].sort((a, b) => 
         ascending ? a.avgSleep - b.avgSleep : b.avgSleep - a.avgSleep
     );
+    
+    // 如果数据太多，取 Top 40 以保证美观，否则圆周太挤
+    const sortedData = allData.length > 40 ? allData.slice(0, 40) : allData;
 
     const containerWidth = container.node().getBoundingClientRect().width;
     const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 30, bottom: 40, left: 120};
+    // 增加边距以容纳标签
+    const margin = {top: 20, right: 20, bottom: 20, left: 20};
     const width = containerWidth - margin.left - margin.right;
     const height = containerHeight - margin.top - margin.bottom;
+    
+    // 半径设置
+    const innerRadius = 50; 
+    const outerRadius = Math.min(width, height) / 2 - 30; // 留出标签空间
 
     const svg = container.append("svg")
         .attr("width", containerWidth)
         .attr("height", containerHeight)
         .append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
+        .attr("transform", `translate(${containerWidth / 2},${containerHeight / 2})`);
 
-    const x = d3.scaleLinear()
-        .domain([0, 8])
-        .range([0, width]);
-
-    const y = d3.scaleBand()
+    // X轴：国家（角度）
+    const x = d3.scaleBand()
+        .range([0, 2 * Math.PI])
         .domain(sortedData.map(d => d.country))
-        .range([0, height])
-        .padding(0.08);
+        .align(0);
 
+    // Y轴：睡眠时长（半径）
+    // 为了拉开差距且保证视觉效果，Domain 可以从较小值开始
+    const minVal = d3.min(sortedData, d => d.avgSleep);
+    const maxVal = d3.max(sortedData, d => d.avgSleep);
+    // 动态调整Y轴范围，让柱子长度差异更明显，但至少保留其长度的一半作为基准
+    const yMin = Math.max(0, minVal - 2); 
+    
+    const y = d3.scaleLinear()
+        .range([innerRadius, outerRadius])
+        .domain([yMin, maxVal]); 
+
+    // 颜色比例尺 - 使用 HCL 插值获得更鲜艳的过渡
     const colorScale = d3.scaleSequential()
-        .domain([6, 8])
-        .interpolator(d3.interpolateRgb(COLORS.danger, COLORS.success));
+        .domain([minVal, maxVal]) 
+        .interpolator(d3.interpolateHcl(COLORS.danger, COLORS.success)); 
 
+    // 添加同心圆参考线 (Grid)
+    const yTicks = y.ticks(3);
     svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis");
-
+        .selectAll("circle")
+        .data(yTicks)
+        .join("circle")
+        .attr("fill", "none")
+        .attr("stroke", "rgba(255,255,255,0.05)")
+        .attr("stroke-dasharray", "3,3")
+        .attr("r", y);
+        
+    // 刻度文字
     svg.append("g")
-        .call(d3.axisLeft(y))
-        .attr("class", "axis")
         .selectAll("text")
-        .style("font-size", "10px");
+        .data(yTicks)
+        .join("text")
+        .attr("y", d => -y(d))
+        .attr("dy", "0.35em")
+        .attr("fill", "rgba(255,255,255,0.2)")
+        .attr("font-size", "8px")
+        .attr("text-anchor", "middle")
+        .style("pointer-events", "none") // 避免干扰交互
+        .text(d => d + "h");
 
-    svg.selectAll(".bar")
+    // 初始状态用Arc (半径为 0 或 innerRadius)
+    const arcZero = d3.arc()
+        .innerRadius(innerRadius)
+        .outerRadius(innerRadius) // 半径从内部开始
+        .startAngle(d => x(d.country))
+        .endAngle(d => x(d.country) + x.bandwidth())
+        .padAngle(0.02)
+        .padRadius(innerRadius);
+
+    // 绘制辐射柱状图
+    const arc = d3.arc()
+        .innerRadius(innerRadius)
+        .outerRadius(d => y(d.avgSleep))
+        .startAngle(d => x(d.country))
+        .endAngle(d => x(d.country) + x.bandwidth())
+        .padAngle(0.02)
+        .padRadius(innerRadius);
+
+    // 高亮时的 Arc 生成器
+    const arcHover = d3.arc()
+        .innerRadius(innerRadius)
+        .outerRadius(d => y(d.avgSleep) + 8) // 变长
+        .startAngle(d => x(d.country) - 0.01) // 变宽
+        .endAngle(d => x(d.country) + x.bandwidth() + 0.01)
+        .padAngle(0.02)
+        .padRadius(innerRadius);
+
+    svg.append("g")
+        .selectAll("path")
         .data(sortedData)
-        .join("rect")
-        .attr("x", 0)
-        .attr("y", d => y(d.country))
-        .attr("width", d => x(d.avgSleep))
-        .attr("height", y.bandwidth())
+        .join("path")
         .attr("fill", d => colorScale(d.avgSleep))
-        .attr("rx", 3)
+        .attr("d", arcZero) // 初始：长度为0
+        .attr("cursor", "pointer")
+        .attr("stroke", "none")
+        .transition() // 生长动画
+        .duration(1000)
+        .delay((d, i) => i * 20)
+        .ease(d3.easeCubicOut)
+        .attr("d", arc);
+
+    // 绑定事件 (Transition后需重新选择)
+    svg.selectAll("path")
         .on("mouseover", function(event, d) {
+            // 高亮效果
+            d3.select(this)
+                .transition().duration(200)
+                .attr("d", arcHover)
+                .attr("filter", "drop-shadow(0 0 5px " + colorScale(d.avgSleep) + ")");
+            
+            // 更新中心文字
+            updateCenterText(d);
+            
+            // 简单的 Tooltip 辅助
             showTooltip(event, `
                 <div class="tooltip-title">${d.country}</div>
                 <div class="tooltip-row">
                     <span>平均睡眠:</span>
                     <span>${d.avgSleep}小时</span>
                 </div>
+                 <div class="tooltip-row">
+                    <span>排名:</span>
+                    <span>#${sortedData.indexOf(d) + 1}</span>
+                </div>
                 <div class="tooltip-row">
                     <span>熬夜率:</span>
                     <span>${d.lateNightRate}%</span>
                 </div>
-                <div class="tooltip-row">
-                    <span>周工作时长:</span>
-                    <span>${d.workHours}小时</span>
-                </div>
             `);
-            d3.select(this).attr("opacity", 0.8);
         })
-        .on("mouseout", function() {
+        .on("mouseout", function(event, d) {
+            d3.select(this)
+                .transition().duration(200)
+                .attr("d", arc)
+                .attr("filter", "none");
+                
             hideTooltip();
-            d3.select(this).attr("opacity", 1);
+            resetCenterText();
         });
 
-    // 数值标签
-    svg.selectAll(".label")
+    // 标签
+    const labelGroup = svg.append("g")
+        .selectAll("g")
         .data(sortedData)
-        .join("text")
-        .attr("x", d => x(d.avgSleep) + 5)
-        .attr("y", d => y(d.country) + y.bandwidth() / 2)
-        .attr("dy", "0.35em")
-        .style("fill", COLORS.text)
-        .style("font-size", "10px")
-        .style("font-weight", "600")
-        .text(d => d.avgSleep + "h");
+        .join("g")
+        .attr("text-anchor", function(d) { return (x(d.country) + x.bandwidth() / 2 + Math.PI) % (2 * Math.PI) < Math.PI ? "end" : "start"; })
+        .attr("transform", function(d) { return "rotate(" + ((x(d.country) + x.bandwidth() / 2) * 180 / Math.PI - 90) + ")" + "translate(" + (y(d.avgSleep) + 5) + ",0)"; })
+        .style("opacity", 0); // 初始隐藏
+    
+    // 标签入场动画
+    labelGroup.transition()
+        .duration(1000)
+        .delay((d,i) => 800 + i * 20)
+        .style("opacity", 1);
 
-    // 渐变图例（睡眠时长）- 渲染到HTML容器
+    labelGroup.append("text")
+        .text(d => d.country)
+        .attr("transform", function(d) { return (x(d.country) + x.bandwidth() / 2 + Math.PI) % (2 * Math.PI) < Math.PI ? "rotate(180)" : "rotate(0)"; })
+        .style("font-size", "9px")
+        .style("fill", "rgba(255,255,255,0.6)")
+        .attr("alignment-baseline", "middle");
+
+    // 中心文本区域
+    const centerGroup = svg.append("g")
+        .attr("class", "center-text")
+        .style("pointer-events", "none");
+    
+    function resetCenterText() {
+        centerGroup.html("");
+        centerGroup.append("text")
+            .attr("y", -8)
+            .attr("text-anchor", "middle")
+            .style("font-size", "10px")
+            .style("fill", COLORS.text)
+            .style("opacity", 0.6)
+            .text("全球平均");
+            
+        centerGroup.append("text")
+            .attr("y", 12)
+            .attr("text-anchor", "middle")
+            .style("font-size", "18px")
+            .style("font-family", "Orbitron")
+            .style("fill", COLORS.primary)
+            .text(d3.mean(sortedData, d => d.avgSleep).toFixed(1) + "h");
+    }
+    
+    function updateCenterText(d) {
+        centerGroup.html("");
+        // 自适应字体大小
+        let name = d.country;
+        let fontSize = "11px";
+        if (name.length > 12) fontSize = "9px";
+        
+        centerGroup.append("text")
+            .attr("y", -8)
+            .attr("text-anchor", "middle")
+            .style("font-size", fontSize)
+            .style("fill", COLORS.text)
+            .style("font-weight", "bold")
+            .text(name);
+            
+        centerGroup.append("text")
+            .attr("y", 12)
+            .attr("text-anchor", "middle")
+            .style("font-size", "18px")
+            .style("font-family", "Orbitron")
+            .style("fill", colorScale(d.avgSleep))
+            .text(d.avgSleep + "h");
+    }
+
+    resetCenterText();
+
+    // 渐变图例（睡眠时长）- 渲染到HTML容器 (保持原样，仅更新文字描述以匹配新图表风格)
     const legendContainer = d3.select("#ranking-legend");
     legendContainer.html("");
     
@@ -2128,7 +2115,7 @@ function drawGlobalRanking(ascending = true) {
         .attr("width", 100)
         .attr("height", 10)
         .attr("fill", "url(#ranking-gradient-legend)")
-        .attr("stroke", COLORS.primary)
+        .attr("stroke", "rgba(255,255,255,0.2)")
         .attr("stroke-width", 1)
         .attr("rx", 2);
     
@@ -2138,7 +2125,7 @@ function drawGlobalRanking(ascending = true) {
         .style("fill", COLORS.text)
         .style("font-size", "10px")
         .style("text-anchor", "end")
-        .text("较短");
+        .text("短");
     
     svgLegend.append("text")
         .attr("x", 122)
@@ -2146,143 +2133,5 @@ function drawGlobalRanking(ascending = true) {
         .style("fill", COLORS.text)
         .style("font-size", "10px")
         .style("text-anchor", "start")
-        .text("较长");
+        .text("长");
 }
-
-// 地区熬夜率对比
-// 全球气泡图 - 已注释，不再使用
-/*
-function drawGlobalBubble() {
-    const container = d3.select("#global-bubble-chart");
-    container.selectAll("*").remove();
-
-    const containerWidth = container.node().getBoundingClientRect().width;
-    const containerHeight = container.node().getBoundingClientRect().height;
-    const margin = {top: 20, right: 30, bottom: 60, left: 70};
-    const width = containerWidth - margin.left - margin.right;
-    const height = containerHeight - margin.top - margin.bottom;
-
-    const svg = container.append("svg")
-        .attr("width", containerWidth)
-        .attr("height", containerHeight)
-        .append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    const x = d3.scaleLinear()
-        .domain([35, 55])
-        .range([0, width]);
-
-    const y = d3.scaleLinear()
-        .domain([6, 8])
-        .range([height, 0]);
-
-    const size = d3.scaleLinear()
-        .domain([0, d3.max(globalData, d => d.internetHours)])
-        .range([3, 12]);
-
-    const regions = Array.from(new Set(globalData.map(d => d.region)));
-    const colorScale = d3.scaleOrdinal()
-        .domain(regions)
-        .range([COLORS.danger, COLORS.tertiary, COLORS.secondary, COLORS.primary, COLORS.success]);
-
-    // 网格
-    svg.append("g")
-        .attr("class", "grid")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x).tickSize(-height).tickFormat(""))
-        .style("stroke-opacity", 0.1);
-
-    svg.append("g")
-        .attr("class", "grid")
-        .call(d3.axisLeft(y).tickSize(-width).tickFormat(""))
-        .style("stroke-opacity", 0.1);
-
-    // 轴
-    svg.append("g")
-        .attr("transform", `translate(0,${height})`)
-        .call(d3.axisBottom(x))
-        .attr("class", "axis");
-
-    svg.append("g")
-        .call(d3.axisLeft(y))
-        .attr("class", "axis");
-
-    svg.append("text")
-        .attr("x", width / 2)
-        .attr("y", height + 45)
-        .attr("fill", COLORS.text)
-        .style("text-anchor", "middle")
-        .style("font-size", "12px")
-        .text("周工作时长 (小时)");
-
-    svg.append("text")
-        .attr("transform", "rotate(-90)")
-        .attr("y", -50)
-        .attr("x", -height / 2)
-        .attr("fill", COLORS.text)
-        .style("text-anchor", "middle")
-        .style("font-size", "12px")
-        .text("平均睡眠时长 (小时)");
-
-    // 绘制气泡
-    svg.selectAll("circle")
-        .data(globalData)
-        .join("circle")
-        .attr("cx", d => x(d.workHours))
-        .attr("cy", d => y(d.avgSleep))
-        .attr("r", d => size(d.internetHours))
-        .attr("fill", d => colorScale(d.region))
-        .attr("opacity", 0.75)
-        .attr("stroke", "#fff")
-        .attr("stroke-width", 1)
-        .on("mouseover", function(event, d) {
-            showTooltip(event, `
-                <div class="tooltip-title">${d.country}</div>
-                <div class="tooltip-row">
-                    <span>地区:</span>
-                    <span>${d.region}</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>睡眠时长:</span>
-                    <span>${d.avgSleep}小时</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>工作时长:</span>
-                    <span>${d.workHours}小时/周</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>互联网使用:</span>
-                    <span>${d.internetHours}小时/天</span>
-                </div>
-                <div class="tooltip-row">
-                    <span>熬夜率:</span>
-                    <span>${d.lateNightRate}%</span>
-                </div>
-            `);
-            d3.select(this)
-                .transition()
-                .duration(200)
-                .attr("opacity", 1)
-                .attr("stroke-width", 2);
-        })
-        .on("mouseout", function(event, d) {
-            hideTooltip();
-            d3.select(this)
-                .transition()
-                .duration(200)
-                .attr("opacity", 0.75)
-                .attr("stroke-width", 1);
-        });
-
-    // 图例
-    const legend = d3.select("#global-legend");
-    legend.html("");
-    regions.forEach(region => {
-        const item = legend.append("div").attr("class", "legend-item");
-        item.append("div")
-            .attr("class", "legend-color")
-            .style("background", colorScale(region));
-        item.append("span").text(region);
-    });
-}
-*/
